@@ -95,7 +95,7 @@ local function load_services()
 			end
 
 			for _, def in ipairs(registered) do
-				if def.name and def.cmd then
+				if def.name then
 					services[def.name] = {
 						def = def,
 						pid = nil,
@@ -121,6 +121,13 @@ local function start_service(name)
 				if not ok then return false, "dependency failed: " .. dep .. ": " .. (err or "") end
 			end
 		end
+	end
+
+	-- Target (no cmd): mark done immediately once deps are satisfied
+	if not svc.def.cmd then
+		svc.state = "running"
+		log("target %s reached", name)
+		return true
 	end
 
 	local pid = unistd.fork()
