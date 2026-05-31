@@ -1,1 +1,4 @@
+# SPDX-License-Identifier: ISC
 option('lua', type: 'string', value: 'lua5.4', description: 'Lua pkg-config name')
+option('lua_version', type: 'string', value: '', description: 'Lua version for module paths (e.g. 5.4, 5.5). Auto-detected from lua option if empty.')
+option('as_init', type: 'boolean', value: false, description: 'Install symlink at /sbin/init pointing to luxd')
