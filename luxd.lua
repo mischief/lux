@@ -467,3 +467,8 @@ while running do
 end
 
 os.remove(sock_path)
+
+-- If we're PID 1, reboot/halt instead of exiting
+if unistd.getpid() == 1 then
+	sys.reboot(sys.RB_POWER_OFF)
+end
