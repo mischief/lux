@@ -130,6 +130,17 @@ local function start_service(name)
 		signal.signal(signal.SIGINT, signal.SIG_DFL)
 		signal.signal(signal.SIGTERM, signal.SIG_DFL)
 		signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+		-- Attach to tty if specified
+		if svc.def.tty then
+			local fcntl = require("posix.fcntl")
+			local tty_fd = fcntl.open(svc.def.tty, fcntl.O_RDWR)
+			if tty_fd then
+				unistd.dup2(tty_fd, 0)
+				unistd.dup2(tty_fd, 1)
+				unistd.dup2(tty_fd, 2)
+				if tty_fd > 2 then unistd.close(tty_fd) end
+			end
+		end
 		-- Set environment
 		if svc.def.env then
 			for k, v in pairs(svc.def.env) do
