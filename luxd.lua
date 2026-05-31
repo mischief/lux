@@ -303,6 +303,12 @@ signal.signal(signal.SIGCHLD, function()
 end)
 
 if do_mount then mount_fs() end
+
+-- Print version (set by meson at build time, or "dev" if running from source)
+local VERSION = "@VERSION@"
+if VERSION:sub(1,1) == "@" then VERSION = "dev" end
+log("starting (version %s)", VERSION)
+
 run_boot()
 load_services()
 

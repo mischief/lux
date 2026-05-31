@@ -34,13 +34,27 @@ install_data('rpc.lua',
   install_dir: lua_mod_dir / 'lux',
 )
 
-# Executables
-install_data('luxd.lua',
-  rename: 'luxd',
+# Get git version
+git = find_program('git', required: false)
+if git.found()
+  version_str = run_command(git, 'describe', '--always', '--dirty', check: false).stdout().strip()
+else
+  version_str = meson.project_version()
+endif
+
+# Generate luxd with version embedded
+luxd_conf = configuration_data()
+luxd_conf.set('VERSION', version_str)
+luxd_generated = configure_file(
+  input: 'luxd.lua',
+  output: 'luxd',
+  configuration: luxd_conf,
+  install: true,
   install_dir: get_option('sbindir'),
   install_mode: 'rwxr-xr-x',
 )
 
+# Executables
 install_data('luxctl.lua',
   rename: 'luxctl',
   install_dir: get_option('sbindir'),
