@@ -8,7 +8,6 @@ package.cpath = src .. "?.so;" .. package.cpath
 
 local unistd = require("posix.unistd")
 local wait = require("posix.sys.wait")
-local ptime = require("posix.time")
 local signal = require("posix.signal")
 local stat = require("posix.sys.stat")
 local stdlib = require("posix.stdlib")
@@ -120,6 +119,25 @@ local function start_service(name)
 				local ok, err = start_service(dep)
 				if not ok then return false, "dependency failed: " .. dep .. ": " .. (err or "") end
 			end
+			-- Wait for oneshot deps to complete
+			dep_svc = services[dep]
+			if dep_svc and dep_svc.def.cmd and not dep_svc.def.restart and dep_svc.state == "running" then
+				-- Oneshot still running, wait for it
+				while dep_svc.state == "running" and dep_svc.pid do
+					local wpid, reason, status = wait.wait(dep_svc.pid)
+					if wpid and wpid > 0 then
+						dep_svc.pid = nil
+						if reason == "exited" and status == 0 then
+							dep_svc.state = "done"
+							log("%s completed", dep)
+						else
+							dep_svc.state = "failed"
+							log("%s failed (%s %d)", dep, reason or "?", status or 0)
+							return false, "dependency failed: " .. dep
+						end
+					end
+				end
+			end
 		end
 	end
 
@@ -170,21 +188,8 @@ local function start_service(name)
 
 	svc.pid = pid
 	svc.state = "running"
+	svc.stopped_explicitly = nil
 	log("started %s (pid %d)", name, pid)
-
-	-- Oneshot: wait for completion before returning
-	if not svc.def.restart and svc.def.cmd then
-		local _, reason, status = wait.wait(pid)
-		svc.pid = nil
-		if reason == "exited" and status == 0 then
-			svc.state = "done"
-			log("%s completed", name)
-		else
-			svc.state = "failed"
-			log("%s failed (%s %d)", name, reason or "?", status or 0)
-			return false, name .. " failed"
-		end
-	end
 
 	return true
 end
@@ -193,28 +198,11 @@ end
 local function stop_service(name)
 	local svc = services[name]
 	if not svc then return false, "unknown service: " .. name end
-	if svc.state ~= "running" then return true end
+	if svc.state ~= "running" or not svc.pid then return true end
 
+	svc.stopped_explicitly = true
 	signal.kill(svc.pid, signal.SIGTERM)
-
-	-- Wait up to 5 seconds
-	for _ = 1, 50 do
-		local wpid = wait.wait(svc.pid, wait.WNOHANG)
-		if wpid and wpid > 0 then
-			svc.state = "stopped"
-			svc.pid = nil
-			log("stopped %s", name)
-			return true
-		end
-		ptime.nanosleep({tv_sec=0, tv_nsec=100000000}) -- 100ms
-	end
-
-	-- Force kill
-	signal.kill(svc.pid, signal.SIGKILL)
-	wait.wait(svc.pid)
-	svc.state = "stopped"
-	svc.pid = nil
-	log("killed %s", name)
+	log("stopping %s (pid %d)", name, svc.pid)
 	return true
 end
 
@@ -263,11 +251,12 @@ local function shutdown()
 			signal.kill(-svc.pid, signal.SIGTERM)
 		end
 	end
-	-- Wait up to 5 seconds
-	for _ = 1, 50 do
+	-- Wait for services to exit (up to 5 seconds)
+	local deadline = os.time() + 5
+	while os.time() < deadline do
 		local all_stopped = true
 		for _, svc in pairs(services) do
-			if svc.state == "running" then all_stopped = false; break end
+			if svc.state == "running" and svc.pid then all_stopped = false; break end
 		end
 		if all_stopped then break end
 		local wpid = wait.wait(-1, wait.WNOHANG)
@@ -275,13 +264,14 @@ local function shutdown()
 			for _, svc in pairs(services) do
 				if svc.pid == wpid then svc.state = "stopped"; svc.pid = nil; break end
 			end
+		else
+			unistd.sleep(1)
 		end
-		ptime.nanosleep({tv_sec=0, tv_nsec=100000000})
 	end
 	-- Kill stragglers
 	for _, svc in pairs(services) do
 		if svc.state == "running" and svc.pid then
-			signal.kill(-svc.pid, signal.SIGKILL)
+			signal.kill(svc.pid, signal.SIGKILL)
 			svc.state = "stopped"
 			svc.pid = nil
 		end
@@ -434,13 +424,14 @@ while running do
 		end
 	end
 
-	poll.poll(fds, -1)
+	poll.poll(fds, 1000)
 
 	-- Check for control connections
 	if fds[srv_fd].revents and fds[srv_fd].revents.IN then
 		local ibuf, typ, data, client_fd = rpc.accept(srv_fd)
 		if ibuf then
 			handle_message(ibuf, typ, data, client_fd)
+			unistd.close(client_fd)
 		end
 	end
 
@@ -451,26 +442,33 @@ while running do
 		end
 	end
 
-	-- Check for child exits
+	-- Check for child exits (always try, SA_RESTART may swallow pipe notification)
 	if fds[chld_r].revents and fds[chld_r].revents.IN then
-		-- Drain the pipe
 		while unistd.read(chld_r, 64) do end
-
-		-- Reap all dead children
-		while true do
-			local wpid, reason, status = wait.wait(-1, wait.WNOHANG)
-			if not wpid or wpid <= 0 then break end
-			for name, svc in pairs(services) do
-				if svc.pid == wpid then
-					log("%s exited (%s %d)", name, reason or "?", status or 0)
-					svc.pid = nil
+	end
+	-- Reap all dead children
+	while true do
+		local wpid, reason, status = wait.wait(-1, wait.WNOHANG)
+		if not wpid or wpid <= 0 then break end
+		for name, svc in pairs(services) do
+			if svc.pid == wpid then
+				log("%s exited (%s %d)", name, reason or "?", status or 0)
+				svc.pid = nil
+				if not svc.def.restart and svc.def.cmd then
+					if reason == "exited" and status == 0 then
+						svc.state = "done"
+					else
+						svc.state = "failed"
+					end
+				else
 					svc.state = "stopped"
-					if not shutdown_requested and svc.def.restart then
+					if not shutdown_requested and svc.def.restart and not svc.stopped_explicitly then
 						log("restarting %s", name)
 						start_service(name)
 					end
-					break
+					svc.stopped_explicitly = nil
 				end
+				break
 			end
 		end
 	end

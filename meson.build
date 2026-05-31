@@ -92,6 +92,8 @@ tests = [
   'status',
   'stop_start',
   'shutdown',
+  'oneshot',
+  'target',
 ]
 
 foreach t : tests
