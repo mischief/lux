@@ -422,6 +422,7 @@ log("listening on %s", sock_path)
 -- Main loop
 
 while running do
+	local ok, err = pcall(function()
 	local fds = {
 		[srv_fd] = { events = { IN = true } },
 		[chld_r] = { events = { IN = true } },
@@ -488,6 +489,9 @@ while running do
 		while unistd.read(term_r, 64) do end
 		shutdown_requested = true
 	end
+
+	end) -- end pcall
+	if not ok then log("error: %s", tostring(err)) end
 
 	if shutdown_requested then
 		shutdown()

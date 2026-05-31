@@ -38,7 +38,7 @@ end
 -- Server: send reply
 function M.reply(ibuf, client_fd, payload)
 	ibuf:compose(M.ACK, 0, 0, -1, payload or "")
-	ibuf:flush()
+	pcall(ibuf.flush, ibuf)
 end
 
 -- Client: connect, send a message, receive reply, close
