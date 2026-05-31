@@ -1,13 +1,14 @@
 #!/usr/bin/env lua5.4
 -- SPDX-License-Identifier: ISC
--- netd - DHCP client daemon with privilege separation
+-- netd - network daemon with privilege separation
 --
--- Two-process model (re-exec, like OpenBSD dhcpleased):
+-- Three-process model (re-exec, like OpenBSD dhcpleased):
 --   netd [-dv] <iface>      → main (root)
---   netd -E [-dv] <iface>   → engine (unprivileged, re-exec'd by main)
+--   netd -E [-dv] <iface>   → engine (unprivileged): DHCP
+--   netd -N [-dv] <iface>   → ntpd (unprivileged): SNTP time sync
 --
--- Main opens privileged sockets, re-execs engine child with IPC fd on fd 3.
--- Engine drops privileges, runs DHCP state machine.
+-- Main opens privileged sockets, re-execs children with IPC fds.
+-- Engine gets fd 3, ntpd gets fd 4.
 
 local unistd = require("posix.unistd")
 local socket = require("posix.sys.socket")
@@ -22,14 +23,17 @@ local log = require("net.log")
 local sys = require("net.sys")
 local rpc = require("net.rpc")
 local engine = require("net.engine")
+local ntpd = require("net.ntpd")
 
 local NETD_USER = "nobody"
 local RESOLV_CONF = "/etc/resolv.conf"
-local IPC_FD = 3
+local ENGINE_FD = 3
+local NTPD_FD = 4
 
 local debug_mode = false
 local verbose = false
 local engine_mode = false
+local ntpd_mode = false
 local ifname = nil
 
 local function usage()
@@ -39,11 +43,12 @@ end
 
 local function parse_args()
 	local optind = 1
-	for opt, optarg, oi in unistd.getopt(arg, "dvE") do
+	for opt, optarg, oi in unistd.getopt(arg, "dvEN") do
 		if opt == "?" then usage() end
 		if opt == "d" then debug_mode = true end
 		if opt == "v" then verbose = true end
 		if opt == "E" then engine_mode = true end
+		if opt == "N" then ntpd_mode = true end
 		optind = oi
 	end
 	ifname = arg[optind]
@@ -136,7 +141,7 @@ local function run_engine()
 	log.init(debug_mode, syslog.LOG_DAEMON)
 	if verbose then log.setverbose(true) end
 
-	-- IPC fd is 3 (inherited from parent)
+	-- IPC fd is ENGINE_FD (inherited from parent)
 	local pw = pwd.getpwnam(NETD_USER)
 	if not pw then
 		log.fatal("unknown user: " .. NETD_USER)
@@ -156,7 +161,35 @@ local function run_engine()
 
 	log.debug("privileges dropped")
 
-	engine.run(IPC_FD, ifname, debug_mode, verbose)
+	engine.run(ENGINE_FD, ifname, debug_mode, verbose)
+end
+
+-- NTP child process: entered via netd -N
+local function run_ntpd()
+	log.procinit("ntpd")
+	log.init(debug_mode, syslog.LOG_DAEMON)
+	if verbose then log.setverbose(true) end
+
+	local pw = pwd.getpwnam(NETD_USER)
+	if not pw then
+		log.fatal("unknown user: " .. NETD_USER)
+	end
+
+	-- Drop privileges
+	local r, e
+	r, e = sys.chroot("/var/empty")
+	if not r then log.fatal("chroot: " .. e) end
+	unistd.chdir("/")
+	r, e = sys.setgroups(pw.pw_gid)
+	if not r then log.fatal("setgroups: " .. e) end
+	r, e = sys.setresgid(pw.pw_gid, pw.pw_gid, pw.pw_gid)
+	if not r then log.fatal("setresgid: " .. e) end
+	r, e = sys.setresuid(pw.pw_uid, pw.pw_uid, pw.pw_uid)
+	if not r then log.fatal("setresuid: " .. e) end
+
+	log.debug("privileges dropped")
+
+	ntpd.run(NTPD_FD, nil, debug_mode, verbose)
 end
 
 -- Main process
@@ -210,12 +243,12 @@ local function run_main()
 		-- Child: set up fd 3 as IPC, close parent's end
 		unistd.close(main_fd)
 		unistd.close(udp_fd)
-		if engine_fd ~= IPC_FD then
-			unistd.dup2(engine_fd, IPC_FD)
+		if engine_fd ~= ENGINE_FD then
+			unistd.dup2(engine_fd, ENGINE_FD)
 			unistd.close(engine_fd)
 		end
 		-- Clear close-on-exec for fd 3
-		fcntl.fcntl(IPC_FD, fcntl.F_SETFD, 0)
+		fcntl.fcntl(ENGINE_FD, fcntl.F_SETFD, 0)
 		-- Re-exec ourselves with -E flag
 		local argv = {arg[0], "-E"}
 		if debug_mode then argv[#argv + 1] = "-d" end
@@ -239,11 +272,43 @@ local function run_main()
 	ibuf:flush()
 	unistd.close(udp_fd) -- engine owns it now
 
+	-- Start ntpd child via re-exec
+	local ntp_sv = {socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)}
+	if not ntp_sv[1] then
+		log.fatal("socketpair (ntp): " .. tostring(ntp_sv[2]))
+	end
+	local ntp_main_fd, ntp_child_fd = ntp_sv[1], ntp_sv[2]
+
+	local ntp_pid = unistd.fork()
+	if ntp_pid == -1 then
+		log.fatal("fork (ntp) failed")
+	end
+	if ntp_pid == 0 then
+		unistd.close(ntp_main_fd)
+		unistd.close(main_fd)
+		if ntp_child_fd ~= NTPD_FD then
+			unistd.dup2(ntp_child_fd, NTPD_FD)
+			unistd.close(ntp_child_fd)
+		end
+		fcntl.fcntl(NTPD_FD, fcntl.F_SETFD, 0)
+		local argv = {arg[0], "-N"}
+		if debug_mode then argv[#argv + 1] = "-d" end
+		if verbose then argv[#argv + 1] = "-v" end
+		argv[#argv + 1] = ifname
+		unistd.execp(argv[1], {table.unpack(argv, 2)})
+		log.fatal("execp (ntp) failed")
+	end
+	unistd.close(ntp_child_fd)
+	log.debug(string.format("ntpd pid %d", ntp_pid))
+
+	local ntp_ibuf = imsg.new(ntp_main_fd)
+
 	-- Signal handling
 	local child_dead = false
 	signal.signal(signal.SIGCHLD, function() child_dead = true end)
 	signal.signal(signal.SIGTERM, function()
 		signal.kill(pid, signal.SIGTERM)
+		signal.kill(ntp_pid, signal.SIGTERM)
 		child_dead = true
 	end)
 	signal.signal(signal.SIGPIPE, signal.SIG_IGN)
@@ -260,6 +325,7 @@ local function run_main()
 	local fds = {
 		[main_fd] = {events = {IN = true}},
 		[ctl_fd] = {events = {IN = true}},
+		[ntp_main_fd] = {events = {IN = true}},
 	}
 	local configured = false
 	local ctl_client = nil
@@ -300,6 +366,30 @@ local function run_main()
 			end
 		end
 
+		-- NTP child IPC
+		if ready and ready > 0 and fds[ntp_main_fd].revents and fds[ntp_main_fd].revents.IN then
+			local ret = ntp_ibuf:read()
+			if ret then
+				while true do
+					local msg = ntp_ibuf:get()
+					if not msg then break end
+					if msg:type() == rpc.SETTIME and msg:len() > 0 then
+						local data = rpc.decode(msg:data())
+						local sec = tonumber(data.sec)
+						local usec = tonumber(data.usec) or 0
+						if sec then
+							local ok, err = sys.settimeofday(sec, usec)
+							if ok then
+								log.info(string.format("clock set to %d.%06d", sec, usec))
+							else
+								log.warn("settimeofday: " .. tostring(err))
+							end
+						end
+					end
+				end
+			end
+		end
+
 		-- Control socket
 		if ready and ready > 0 and fds[ctl_fd].revents and fds[ctl_fd].revents.IN then
 			local cfd = socket.accept(ctl_fd)
@@ -332,6 +422,7 @@ local function run_main()
 	os.remove(NETD_SOCK)
 
 	wait.wait(pid)
+	wait.wait(ntp_pid)
 	log.info("exiting")
 end
 
@@ -340,6 +431,8 @@ parse_args()
 
 if engine_mode then
 	run_engine()
+elseif ntpd_mode then
+	run_ntpd()
 else
 	run_main()
 end

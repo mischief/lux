@@ -16,6 +16,10 @@ M.CTL_RENEW   = 7
 M.CTL_RELEASE = 8
 M.CTL_REPLY   = 9
 
+-- ntp: main <-> ntpd child
+M.NTP_SERVER  = 10  -- main -> ntpd: NTP server address
+M.SETTIME     = 11  -- ntpd -> main: set clock (sec, usec)
+
 -- Encode a table as key=value\n pairs.
 -- Repeated keys (tables) emit multiple lines with the same key.
 function M.encode(t)

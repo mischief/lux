@@ -15,6 +15,7 @@
 #include <grp.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#include <sys/time.h>
 #include <net/if.h>
 #include <net/route.h>
 #include <netinet/in.h>
@@ -227,6 +228,17 @@ static int l_route_del(lua_State *L) {
 	return 1;
 }
 
+/* net.sys.settimeofday(sec, usec) -> true or nil, errmsg, errno */
+static int l_settimeofday(lua_State *L) {
+	struct timeval tv;
+	tv.tv_sec = luaL_checkinteger(L, 1);
+	tv.tv_usec = luaL_checkinteger(L, 2);
+	if (settimeofday(&tv, NULL) == -1)
+		return pusherr(L);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
 static const luaL_Reg sys_funcs[] = {
 	/* privsep */
 	{"chroot", l_chroot},
@@ -242,6 +254,8 @@ static const luaL_Reg sys_funcs[] = {
 	/* routing */
 	{"route_add", l_route_add},
 	{"route_del", l_route_del},
+	/* time */
+	{"settimeofday", l_settimeofday},
 	{NULL, NULL}
 };
 

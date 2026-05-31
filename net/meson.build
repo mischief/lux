@@ -7,7 +7,7 @@ shared_library('sys', 'sys.c',
   install_dir: lua_lib_dir / 'net',
 )
 
-install_data('log.lua', 'dhcp.lua', 'engine.lua', 'rpc.lua',
+install_data('log.lua', 'dhcp.lua', 'engine.lua', 'rpc.lua', 'ntpd.lua',
   install_dir: lua_mod_dir / 'net',
 )
 
