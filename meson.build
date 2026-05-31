@@ -61,6 +61,12 @@ install_data('luxctl.lua',
   install_mode: 'rwxr-xr-x',
 )
 
+install_data('services/logd.lua',
+  rename: 'logd',
+  install_dir: get_option('sbindir'),
+  install_mode: 'rwxr-xr-x',
+)
+
 # Optional: install as init symlink in sbindir
 if get_option('as_init')
   install_symlink('init',
