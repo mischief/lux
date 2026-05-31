@@ -292,6 +292,11 @@ end)
 
 if do_mount then mount_fs() end
 
+-- Set a sane default environment for all children
+if not os.getenv("PATH") then
+	stdlib.setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", true)
+end
+
 -- Print version (set by meson at build time, or "dev" if running from source)
 local VERSION = "@VERSION@"
 if VERSION:sub(1,1) == "@" then VERSION = "dev" end
