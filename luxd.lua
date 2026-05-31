@@ -267,6 +267,17 @@ signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 signal.signal(signal.SIGTERM, function() shutdown_requested = true end)
 signal.signal(signal.SIGINT, function() shutdown_requested = true end)
 
+-- Self-pipe for SIGCHLD notification
+local chld_r, chld_w = unistd.pipe()
+-- Set write end non-blocking so handler never blocks
+local fcntl = require("posix.fcntl")
+local flags = fcntl.fcntl(chld_w, fcntl.F_GETFL)
+fcntl.fcntl(chld_w, fcntl.F_SETFL, flags + fcntl.O_NONBLOCK)
+
+signal.signal(signal.SIGCHLD, function()
+	unistd.write(chld_w, "x")
+end)
+
 if do_mount then mount_fs() end
 run_boot()
 load_services()
@@ -288,9 +299,14 @@ log("listening on %s", sock_path)
 local poll = require("posix.poll")
 
 while running do
-	local ready = poll.poll({ [srv_fd] = { events = { IN = true } } }, 200)
+	local fds = {
+		[srv_fd] = { events = { IN = true } },
+		[chld_r] = { events = { IN = true } },
+	}
+	poll.poll(fds, -1) -- block indefinitely until something happens
 
-	if ready and ready > 0 then
+	-- Check for control connections
+	if fds[srv_fd].revents and fds[srv_fd].revents.IN then
 		local client_fd = socket.accept(srv_fd)
 		if client_fd then
 			local ibuf = imsg.new(client_fd)
@@ -301,21 +317,26 @@ while running do
 		end
 	end
 
-	-- Reap children
-	while true do
-		local wpid, reason, status = wait.wait(-1, wait.WNOHANG)
-		if not wpid or wpid <= 0 then break end
-		for name, svc in pairs(services) do
-			if svc.pid == wpid then
-				log("%s exited (%s %d)", name, reason or "?", status or 0)
-				svc.pid = nil
-				svc.state = "stopped"
-				-- Restart if configured and not shutting down
-				if not shutdown_requested and svc.def.restart then
-					log("restarting %s", name)
-					start_service(name)
+	-- Check for child exits
+	if fds[chld_r].revents and fds[chld_r].revents.IN then
+		-- Drain the pipe
+		while unistd.read(chld_r, 64) do end
+
+		-- Reap all dead children
+		while true do
+			local wpid, reason, status = wait.wait(-1, wait.WNOHANG)
+			if not wpid or wpid <= 0 then break end
+			for name, svc in pairs(services) do
+				if svc.pid == wpid then
+					log("%s exited (%s %d)", name, reason or "?", status or 0)
+					svc.pid = nil
+					svc.state = "stopped"
+					if not shutdown_requested and svc.def.restart then
+						log("restarting %s", name)
+						start_service(name)
+					end
+					break
 				end
-				break
 			end
 		end
 	end
