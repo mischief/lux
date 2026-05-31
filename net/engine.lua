@@ -212,6 +212,8 @@ function M.run(ipc_fd, ifname, debug_mode, verbose)
 				elseif mt == rpc.CTL_RELEASE then
 					log.info("release requested")
 					send_deconfigure()
+					lease = nil
+					lease_start = 0
 					state = STATE_INIT
 					retries = 0
 					next_action = now() + 86400 -- don't re-acquire immediately
