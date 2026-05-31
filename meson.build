@@ -47,10 +47,10 @@ install_data('luxctl.lua',
   install_mode: 'rwxr-xr-x',
 )
 
-# Optional: install as /sbin/init
+# Optional: install as init symlink in sbindir
 if get_option('as_init')
   install_symlink('init',
-    pointing_to: get_option('sbindir') / 'luxd',
-    install_dir: get_option('prefix') / 'sbin',
+    pointing_to: 'luxd',
+    install_dir: get_option('sbindir'),
   )
 endif
