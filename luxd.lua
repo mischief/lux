@@ -13,14 +13,7 @@ local stdlib = require("posix.stdlib")
 local socket = require("posix.sys.socket")
 local dirent = require("posix.dirent")
 local imsg = require("imsg")
-
--- Message types
-local MSG_START    = 1
-local MSG_STOP     = 2
-local MSG_RESTART  = 3
-local MSG_STATUS   = 4
-local MSG_SHUTDOWN = 5
-local MSG_ACK      = 6
+local rpc = require("lux.rpc")
 
 -- Defaults
 local sock_path = "/run/lux.sock"
@@ -197,30 +190,27 @@ local function status_string()
 end
 
 -- Handle control message
-local function handle_message(ibuf, msg)
+local function handle_message(ibuf, msg, client_fd)
 	local typ = msg:type()
 	local data = msg:data() or ""
 
-	if typ == MSG_START then
+	if typ == rpc.START then
 		local ok, err = start_service(data)
-		ibuf:compose(MSG_ACK, 0, 0, -1, ok and "ok" or ("error: " .. (err or "")))
-		ibuf:flush()
-	elseif typ == MSG_STOP then
+		rpc.reply(ibuf, client_fd, ok and "ok" or ("error: " .. (err or "")))
+	elseif typ == rpc.STOP then
 		local ok, err = stop_service(data)
-		ibuf:compose(MSG_ACK, 0, 0, -1, ok and "ok" or ("error: " .. (err or "")))
-		ibuf:flush()
-	elseif typ == MSG_RESTART then
+		rpc.reply(ibuf, client_fd, ok and "ok" or ("error: " .. (err or "")))
+	elseif typ == rpc.RESTART then
 		stop_service(data)
 		start_service(data)
-		ibuf:compose(MSG_ACK, 0, 0, -1, "ok")
-		ibuf:flush()
-	elseif typ == MSG_STATUS then
-		ibuf:compose(MSG_ACK, 0, 0, -1, status_string())
-		ibuf:flush()
-	elseif typ == MSG_SHUTDOWN then
+		rpc.reply(ibuf, client_fd, "ok")
+	elseif typ == rpc.STATUS then
+		rpc.reply(ibuf, client_fd, status_string())
+	elseif typ == rpc.SHUTDOWN then
 		shutdown_requested = true
-		ibuf:compose(MSG_ACK, 0, 0, -1, "shutting down")
-		ibuf:flush()
+		rpc.reply(ibuf, client_fd, "shutting down")
+	else
+		unistd.close(client_fd)
 	end
 end
 
@@ -402,13 +392,9 @@ while running do
 
 	-- Check for control connections
 	if fds[srv_fd].revents and fds[srv_fd].revents.IN then
-		local client_fd = socket.accept(srv_fd)
-		if client_fd then
-			local ibuf = imsg.new(client_fd)
-			ibuf:read()
-			local msg = ibuf:get()
-			if msg then handle_message(ibuf, msg) end
-			unistd.close(client_fd)
+		local ibuf, msg, client_fd = rpc.accept(srv_fd)
+		if ibuf and msg then
+			handle_message(ibuf, msg, client_fd)
 		end
 	end
 
