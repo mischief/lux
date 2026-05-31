@@ -33,10 +33,9 @@ When running as PID 1, luxd:
 
 1. Mounts essential filesystems (`/proc`, `/sys`, `/dev`, `/tmp`, `/run`)
 2. Sets default `PATH`
-3. Runs `/etc/lux/boot` (if executable)
-4. Loads service definitions from `/etc/lux/services/*.lua`
-5. Starts all services (respecting dependencies)
-6. Enters main loop (supervise, accept control commands)
+3. Loads service definitions from `/etc/lux/services/*.lua`
+4. Starts all services (respecting dependencies)
+5. Enters main loop (supervise, accept control commands)
 
 ## Service Definition Reference
 
@@ -275,14 +274,13 @@ service "console" {
 ### luxd Options
 
 ```
-luxd [-s sock_path] [-d services_dir] [-b boot_script]
+luxd [-s sock_path] [-d services_dir]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-s` | `/run/lux.sock` | Control socket path |
 | `-d` | `/etc/lux/services` | Service definitions directory |
-| `-b` | `/etc/lux/boot` | Boot script (run before services) |
 
 ### Meson Build Options
 

@@ -23,16 +23,14 @@ local sys = require("lux.sys")
 -- Defaults
 local sock_path = "/run/lux.sock"
 local svc_dir = "/etc/lux/services"
-local boot_script = "/etc/lux/boot"
 
 -- Parse options
 local optind = 1
-for opt, optarg, oi in unistd.getopt(a, "s:d:b:h") do
+for opt, optarg, oi in unistd.getopt(a, "s:d:h") do
 	if opt == "s" then sock_path = optarg
 	elseif opt == "d" then svc_dir = optarg
-	elseif opt == "b" then boot_script = optarg
 	elseif opt == "h" then
-		unistd.write(1, "usage: luxd [-s sock_path] [-d services_dir] [-b boot_script]\n")
+		unistd.write(1, "usage: luxd [-s sock_path] [-d services_dir]\n")
 		os.exit(0)
 	end
 	optind = oi
@@ -255,17 +253,6 @@ local function handle_message(ibuf, typ, data, client_fd)
 	end
 end
 
--- Run boot script
-local function run_boot()
-	if unistd.access(boot_script, "x") ~= 0 then return end
-	log("running %s", boot_script)
-	local pid = unistd.fork()
-	if pid == 0 then
-		unistd.execp("/bin/sh", { "-c", boot_script })
-		os.exit(127)
-	end
-	wait.wait(pid)
-end
 
 -- Shutdown
 local function shutdown()
@@ -330,7 +317,6 @@ local VERSION = "@VERSION@"
 if VERSION:sub(1,1) == "@" then VERSION = "dev" end
 log("starting (version %s)", VERSION)
 
-run_boot()
 load_services()
 
 -- Start all services (non-socket ones)
