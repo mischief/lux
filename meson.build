@@ -21,6 +21,9 @@ lua_lib_dir = get_option('libdir') / 'lua' / lua_ver
 # Build lux/ modules (sys.so, rpc.lua)
 subdir('lux')
 
+# Build net/ modules (netd, sys.so, dhcp.lua, engine.lua, log.lua)
+subdir('net')
+
 # Get git version
 git = find_program('git', required: false)
 if git.found()
