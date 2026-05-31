@@ -66,6 +66,7 @@ install_data('logd.lua',
 install_data(
   'services/console.lua',
   'services/logd.lua',
+  'services/netd.lua',
   install_dir: get_option('datadir') / 'lux' / 'services',
 )
 
