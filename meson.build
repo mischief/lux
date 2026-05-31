@@ -67,6 +67,13 @@ install_data('services/logd.lua',
   install_mode: 'rwxr-xr-x',
 )
 
+# Default service definitions
+install_data(
+  'services/console.lua',
+  'services/logd-svc.lua',
+  install_dir: get_option('datadir') / 'lux' / 'services',
+)
+
 # Optional: install as init symlink in sbindir
 if get_option('as_init')
   install_symlink('init',
