@@ -180,6 +180,9 @@ local function main()
 		unistd.close(udp_fd) -- will receive it back via imsg
 		log.procinit("engine")
 
+		-- Load engine before chroot (filesystem unavailable after)
+		local engine = require("net.engine")
+
 		-- Drop privileges
 		local r, e
 		r, e = sys.chroot("/var/empty")
@@ -194,7 +197,6 @@ local function main()
 
 		log.debug("privileges dropped")
 
-		local engine = require("net.engine")
 		engine.run(engine_fd, ifname, debug_mode, verbose)
 		os.exit(0)
 	end
