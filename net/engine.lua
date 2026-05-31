@@ -155,14 +155,21 @@ function M.run(ipc_fd, ifname, debug_mode, verbose)
 						next_action = now() + REQUEST_TIMEOUT
 
 					elseif state == STATE_REQUESTING and reply.msg_type == dhcp.ACK then
-						log.info(string.format("got ACK: %s lease %ds",
-							reply.yiaddr, reply.lease_time or 0))
-						lease = reply
-						lease_start = now()
-						state = STATE_BOUND
-						send_configure(lease)
-						local t1 = reply.renewal_time or math.floor((reply.lease_time or 3600) / 2)
-						next_action = lease_start + t1
+						-- Verify server_id matches the OFFER we accepted
+						if lease and reply.server_id and lease.server_id
+							and reply.server_id ~= lease.server_id then
+							log.warn(string.format("ACK from wrong server %s (expected %s), ignoring",
+								reply.server_id, lease.server_id))
+						else
+							log.info(string.format("got ACK: %s lease %ds",
+								reply.yiaddr, reply.lease_time or 0))
+							lease = reply
+							lease_start = now()
+							state = STATE_BOUND
+							send_configure(lease)
+							local t1 = reply.renewal_time or math.floor((reply.lease_time or 3600) / 2)
+							next_action = lease_start + t1
+						end
 
 					elseif state == STATE_REQUESTING and reply.msg_type == dhcp.NAK then
 						log.warn("got NAK, restarting")
@@ -172,14 +179,21 @@ function M.run(ipc_fd, ifname, debug_mode, verbose)
 
 					elseif (state == STATE_RENEWING or state == STATE_REBINDING)
 						and reply.msg_type == dhcp.ACK then
-						log.info(string.format("renewed: %s lease %ds",
-							reply.yiaddr, reply.lease_time or 0))
-						lease = reply
-						lease_start = now()
-						state = STATE_BOUND
-						send_configure(lease)
-						local t1 = reply.renewal_time or math.floor((reply.lease_time or 3600) / 2)
-						next_action = lease_start + t1
+						-- Only accept from our current server during renewal
+						if lease and reply.server_id and lease.server_id
+							and reply.server_id ~= lease.server_id then
+							log.warn(string.format("renewal ACK from wrong server %s, ignoring",
+								reply.server_id))
+						else
+							log.info(string.format("renewed: %s lease %ds",
+								reply.yiaddr, reply.lease_time or 0))
+							lease = reply
+							lease_start = now()
+							state = STATE_BOUND
+							send_configure(lease)
+							local t1 = reply.renewal_time or math.floor((reply.lease_time or 3600) / 2)
+							next_action = lease_start + t1
+						end
 					end
 				end
 			end
