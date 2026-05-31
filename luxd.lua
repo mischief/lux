@@ -111,12 +111,13 @@ end
 local function start_service(name)
 	local svc = services[name]
 	if not svc then return false, "unknown service: " .. name end
-	if svc.state == "running" then return true end
+	if svc.state == "running" or svc.state == "done" then return true end
 
 	-- Check dependencies
 	if svc.def.depends then
 		for _, dep in ipairs(svc.def.depends) do
-			if not services[dep] or services[dep].state ~= "running" then
+			local dep_svc = services[dep]
+			if not dep_svc or (dep_svc.state ~= "running" and dep_svc.state ~= "done") then
 				local ok, err = start_service(dep)
 				if not ok then return false, "dependency failed: " .. dep .. ": " .. (err or "") end
 			end
@@ -166,6 +167,21 @@ local function start_service(name)
 	svc.pid = pid
 	svc.state = "running"
 	log("started %s (pid %d)", name, pid)
+
+	-- Oneshot: wait for completion before returning
+	if not svc.def.restart and svc.def.cmd then
+		local _, reason, status = wait.wait(pid)
+		svc.pid = nil
+		if reason == "exited" and status == 0 then
+			svc.state = "done"
+			log("%s completed", name)
+		else
+			svc.state = "failed"
+			log("%s failed (%s %d)", name, reason or "?", status or 0)
+			return false, name .. " failed"
+		end
+	end
+
 	return true
 end
 
