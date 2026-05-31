@@ -282,9 +282,97 @@ if do_mount then mount_fs() end
 run_boot()
 load_services()
 
--- Start all services
-for name in pairs(services) do
-	start_service(name)
+-- Start all services (non-socket ones)
+for name, svc in pairs(services) do
+	if not svc.def.socket then
+		start_service(name)
+	end
+end
+
+-- Create listening sockets for socket-activated services
+local function create_listen_socket(def)
+	local sock_def = def.socket
+	local fd
+	if sock_def.family == "unix" then
+		pcall(os.remove, sock_def.path)
+		fd = socket.socket(socket.AF_UNIX, sock_def.type == "dgram" and socket.SOCK_DGRAM or socket.SOCK_STREAM, 0)
+		socket.bind(fd, { family = socket.AF_UNIX, path = sock_def.path })
+	else
+		-- inet
+		fd = socket.socket(socket.AF_INET, sock_def.type == "dgram" and socket.SOCK_DGRAM or socket.SOCK_STREAM, 0)
+		socket.setsockopt(fd, socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		socket.bind(fd, { family = socket.AF_INET, addr = sock_def.addr or "0.0.0.0", port = sock_def.port })
+	end
+	if sock_def.type ~= "dgram" then
+		socket.listen(fd, sock_def.backlog or 128)
+	end
+	return fd
+end
+
+for name, svc in pairs(services) do
+	if svc.def.socket then
+		local ok, fd = pcall(create_listen_socket, svc.def)
+		if ok then
+			svc.listen_fd = fd
+			log("listening for %s on %s", name,
+				svc.def.socket.path or ("port " .. tostring(svc.def.socket.port)))
+		else
+			log("failed to create socket for %s: %s", name, tostring(fd))
+		end
+	end
+end
+
+-- Handle socket activation
+local function handle_socket_activation(name, svc)
+	local style = svc.def.style or "activate"
+
+	if style == "inetd" then
+		-- Accept connection, fork child with stdin/stdout = client fd
+		local client_fd = socket.accept(svc.listen_fd)
+		if not client_fd then return end
+		local pid = unistd.fork()
+		if pid == 0 then
+			unistd.close(svc.listen_fd)
+			unistd.dup2(client_fd, 0)
+			unistd.dup2(client_fd, 1)
+			unistd.close(client_fd)
+			signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+			if svc.def.env then
+				for k, v in pairs(svc.def.env) do stdlib.setenv(k, v, true) end
+			end
+			local cmd = svc.def.cmd
+			unistd.execp(cmd[1], { table.unpack(cmd, 2) })
+			os.exit(127)
+		end
+		unistd.close(client_fd)
+		-- Don't track as the main service pid (multiple can run)
+	elseif style == "activate" then
+		-- Socket activation: start service, pass listen fd as fd 3
+		if svc.state == "running" then return end
+		local pid = unistd.fork()
+		if pid == 0 then
+			-- Move listen fd to fd 3
+			if svc.listen_fd ~= 3 then
+				unistd.dup2(svc.listen_fd, 3)
+				unistd.close(svc.listen_fd)
+			end
+			unistd.setsid()
+			signal.signal(signal.SIGINT, signal.SIG_DFL)
+			signal.signal(signal.SIGTERM, signal.SIG_DFL)
+			signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+			stdlib.setenv("LISTEN_FDS", "1", true)
+			stdlib.setenv("LISTEN_PID", tostring(unistd.getpid()), true)
+			if svc.def.env then
+				for k, v in pairs(svc.def.env) do stdlib.setenv(k, v, true) end
+			end
+			local cmd = svc.def.cmd
+			unistd.execp(cmd[1], { table.unpack(cmd, 2) })
+			os.exit(127)
+		end
+		svc.pid = pid
+		svc.state = "running"
+		log("activated %s (pid %d)", name, pid)
+	end
 end
 
 -- Create control socket
@@ -303,7 +391,14 @@ while running do
 		[srv_fd] = { events = { IN = true } },
 		[chld_r] = { events = { IN = true } },
 	}
-	poll.poll(fds, -1) -- block indefinitely until something happens
+	-- Add service listen sockets
+	for _, svc in pairs(services) do
+		if svc.listen_fd then
+			fds[svc.listen_fd] = { events = { IN = true } }
+		end
+	end
+
+	poll.poll(fds, -1)
 
 	-- Check for control connections
 	if fds[srv_fd].revents and fds[srv_fd].revents.IN then
@@ -314,6 +409,13 @@ while running do
 			local msg = ibuf:get()
 			if msg then handle_message(ibuf, msg) end
 			unistd.close(client_fd)
+		end
+	end
+
+	-- Check service sockets for activation
+	for name, svc in pairs(services) do
+		if svc.listen_fd and fds[svc.listen_fd] and fds[svc.listen_fd].revents and fds[svc.listen_fd].revents.IN then
+			handle_socket_activation(name, svc)
 		end
 	end
 
