@@ -46,12 +46,27 @@ function M.run(ipc_fd, server, debug_mode, verbose)
 
 	local ibuf = imsg.new(ipc_fd)
 
-	-- Default server, may be overridden by DHCP option 42
+	-- Wait for NTP_SERVER from main (DHCP option 42) before first query.
+	-- Timeout after 30s and fall back to pool.ntp.org.
 	if not server then
-		server = "pool.ntp.org"
+		log.debug("waiting for NTP server from DHCP")
+		local fds_ipc = {[ipc_fd] = {events = {IN = true}}}
+		local ready = poll.poll(fds_ipc, 30000)
+		if ready and ready > 0 then
+			local ret = ibuf:read()
+			if ret then
+				local m = ibuf:get()
+				if m and m:type() == rpc.NTP_SERVER and m:len() > 0 then
+					server = m:data()
+				end
+			end
+		end
+		if not server then
+			server = "pool.ntp.org"
+		end
 	end
 
-	log.info(string.format("ntpd started, server %s", server))
+	log.info(string.format("using NTP server %s", server))
 
 	local retry = INITIAL_RETRY
 	local synced = false
