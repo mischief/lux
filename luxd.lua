@@ -166,7 +166,7 @@ local function start_service(name)
 		end
 		-- Exec
 		local cmd = svc.def.cmd
-		unistd.execp(cmd[1], { table.unpack(cmd, 2) })
+		unistd.execp(cmd[1], cmd)
 		os.exit(127)
 	end
 
@@ -371,7 +371,7 @@ local function handle_socket_activation(name, svc)
 				for k, v in pairs(svc.def.env) do stdlib.setenv(k, v, true) end
 			end
 			local cmd = svc.def.cmd
-			unistd.execp(cmd[1], { table.unpack(cmd, 2) })
+			unistd.execp(cmd[1], cmd)
 			os.exit(127)
 		end
 		unistd.close(client_fd)
@@ -396,7 +396,7 @@ local function handle_socket_activation(name, svc)
 				for k, v in pairs(svc.def.env) do stdlib.setenv(k, v, true) end
 			end
 			local cmd = svc.def.cmd
-			unistd.execp(cmd[1], { table.unpack(cmd, 2) })
+			unistd.execp(cmd[1], cmd)
 			os.exit(127)
 		end
 		svc.pid = pid
