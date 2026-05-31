@@ -17,7 +17,6 @@ local wait = require("posix.sys.wait")
 local signal = require("posix.signal")
 local pwd = require("posix.pwd")
 local poll = require("posix.poll")
-local getopt = require("posix.getopt")
 local syslog = require("posix.syslog")
 local imsg = require("imsg")
 local log = require("net.log")
@@ -37,14 +36,14 @@ local function usage()
 end
 
 local function parse_args()
-	local last_index = 1
-	for r, optname, optarg, i in getopt.getopt(arg, "dv") do
-		if r == "?" then usage() end
-		if optname == "d" then debug_mode = true end
-		if optname == "v" then verbose = true end
-		last_index = i
+	local optind = 1
+	for opt, optarg, oi in unistd.getopt(arg, "dv") do
+		if opt == "?" then usage() end
+		if opt == "d" then debug_mode = true end
+		if opt == "v" then verbose = true end
+		optind = oi
 	end
-	ifname = arg[last_index]
+	ifname = arg[optind]
 	if not ifname then usage() end
 end
 

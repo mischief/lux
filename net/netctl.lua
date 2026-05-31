@@ -7,7 +7,6 @@
 
 local unistd = require("posix.unistd")
 local socket = require("posix.sys.socket")
-local getopt = require("posix.getopt")
 local imsg = require("imsg")
 local rpc = require("net.rpc")
 
@@ -19,14 +18,14 @@ local function usage()
 	os.exit(1)
 end
 
-local last_index = 1
-for r, optname, optarg, i in getopt.getopt(arg, "s:") do
-	if r == "?" then usage() end
-	if optname == "s" then sock_path = optarg end
-	last_index = i
+local optind = 1
+for opt, optarg, oi in unistd.getopt(arg, "s:") do
+	if opt == "?" then usage() end
+	if opt == "s" then sock_path = optarg end
+	optind = oi
 end
 
-command = arg[last_index]
+command = arg[optind]
 if not command then usage() end
 
 -- Default socket path: /run/netd.<iface>.sock — need interface or explicit -s
