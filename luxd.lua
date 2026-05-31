@@ -132,30 +132,18 @@ local function start_service(name)
 		signal.signal(signal.SIGINT, signal.SIG_DFL)
 		signal.signal(signal.SIGTERM, signal.SIG_DFL)
 		signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-		-- Debug helper: write to kernel log (works even without stdout)
-		local function klog(msg)
-			local kfd = fcntl.open("/dev/kmsg", fcntl.O_WRONLY)
-			if kfd then
-				unistd.write(kfd, "luxd[" .. tostring(unistd.getpid()) .. "]: " .. msg .. "\n")
-				unistd.close(kfd)
-			end
-		end
 		-- Attach to tty if specified (must be after setsid)
 		if svc.def.tty then
 			local tty_fd, err = fcntl.open(svc.def.tty, fcntl.O_RDWR)
 			if tty_fd then
-				klog("opened " .. svc.def.tty .. " as fd " .. tostring(tty_fd))
 				-- Make this the controlling terminal
 				local ok, cerr = sys.set_ctty(tty_fd)
-				klog("set_ctty: " .. tostring(ok) .. " " .. tostring(cerr))
 				-- Redirect stdin/stdout/stderr to the tty
 				unistd.dup2(tty_fd, 0)
 				unistd.dup2(tty_fd, 1)
 				unistd.dup2(tty_fd, 2)
 				if tty_fd > 2 then unistd.close(tty_fd) end
-				klog("dup2 done, execing " .. table.concat(svc.def.cmd, " "))
 			else
-				klog("failed to open " .. svc.def.tty .. ": " .. tostring(err))
 			end
 		end
 		-- Set environment
