@@ -10,6 +10,7 @@
 #include <sys/reboot.h>
 #include <sys/resource.h>
 #include <sys/prctl.h>
+#include <sys/ioctl.h>
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -125,8 +126,22 @@ static int l_prctl(lua_State *L) {
 	return 1;
 }
 
+/* lux.sys.set_ctty(fd) -> true or nil, errmsg
+ * Make fd the controlling terminal (TIOCSCTTY) */
+static int l_set_ctty(lua_State *L) {
+	int fd = luaL_checkinteger(L, 1);
+	if (ioctl(fd, TIOCSCTTY, 0) == -1) {
+		lua_pushnil(L);
+		lua_pushstring(L, strerror(errno));
+		return 2;
+	}
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
 static const luaL_Reg sys_funcs[] = {
 	{"setsid", l_setsid},
+	{"set_ctty", l_set_ctty},
 	{"mount", l_mount},
 	{"umount", l_umount},
 	{"reboot", l_reboot},

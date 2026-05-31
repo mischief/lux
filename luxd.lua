@@ -125,16 +125,18 @@ local function start_service(name)
 
 	local pid = unistd.fork()
 	if pid == 0 then
-		-- Child
+		-- Child: create new session first (detach from parent's tty)
 		sys.setsid()
 		signal.signal(signal.SIGINT, signal.SIG_DFL)
 		signal.signal(signal.SIGTERM, signal.SIG_DFL)
 		signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-		-- Attach to tty if specified
+		-- Attach to tty if specified (must be after setsid)
 		if svc.def.tty then
 			local fcntl = require("posix.fcntl")
 			local tty_fd = fcntl.open(svc.def.tty, fcntl.O_RDWR)
 			if tty_fd then
+				-- Make this the controlling terminal
+				sys.set_ctty(tty_fd)
 				unistd.dup2(tty_fd, 0)
 				unistd.dup2(tty_fd, 1)
 				unistd.dup2(tty_fd, 2)
