@@ -61,6 +61,12 @@ install_data('luxctl.lua',
   install_mode: 'rwxr-xr-x',
 )
 
+install_data('luxd-run.lua',
+  rename: 'luxd-run',
+  install_dir: get_option('sbindir'),
+  install_mode: 'rwxr-xr-x',
+)
+
 install_data('logd.lua',
   rename: 'logd',
   install_dir: get_option('sbindir'),

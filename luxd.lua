@@ -81,6 +81,7 @@ local function load_services()
 				service = function(name)
 					return function(def)
 						def.name = name
+						def._file = path
 						registered[#registered + 1] = def
 					end
 				end,
@@ -124,8 +125,8 @@ local function start_service(name)
 		end
 	end
 
-	-- Target (no cmd): mark done immediately once deps are satisfied
-	if not svc.def.cmd then
+	-- Target (no cmd, no run): mark done immediately once deps are satisfied
+	if not svc.def.cmd and not svc.def.run then
 		svc.state = "running"
 		log("target %s reached", name)
 		return true
@@ -159,8 +160,13 @@ local function start_service(name)
 			end
 		end
 		-- Exec
-		local cmd = svc.def.cmd
-		unistd.execp(cmd[1], { table.unpack(cmd, 2) })
+		if svc.def.cmd then
+			local cmd = svc.def.cmd
+			unistd.execp(cmd[1], { table.unpack(cmd, 2) })
+		elseif svc.def.run then
+			-- Re-exec via luxd-run for clean interpreter state
+			unistd.execp("luxd-run", { svc.def._file, name })
+		end
 		os.exit(127)
 	end
 
