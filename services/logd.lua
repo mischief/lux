@@ -157,7 +157,7 @@ if kmsg_fd then fds[kmsg_fd] = { events = { IN = true } } end
 write_log(timestamp() .. " logd: started")
 
 while running do
-	local ready = poll.poll(fds, 1000) -- 1s timeout for rotation checks
+	local ready = poll.poll(fds, 60000) -- 60s timeout for rotation checks
 
 	if ready and ready > 0 then
 		-- Read syslog messages
