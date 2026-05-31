@@ -19,6 +19,7 @@ M.OPT_ROUTER          = 3
 M.OPT_DNS             = 6
 M.OPT_HOSTNAME        = 12
 M.OPT_DOMAIN          = 15
+M.OPT_NTP             = 42
 M.OPT_BROADCAST       = 28
 M.OPT_REQUESTED_IP    = 50
 M.OPT_LEASE_TIME      = 51
@@ -104,8 +105,8 @@ function M.encode(opts)
 	end
 
 	-- Parameter request list
-	pkt = pkt .. string.char(M.OPT_PARAM_LIST, 4,
-		M.OPT_SUBNET_MASK, M.OPT_ROUTER, M.OPT_DNS, M.OPT_DOMAIN)
+	pkt = pkt .. string.char(M.OPT_PARAM_LIST, 5,
+		M.OPT_SUBNET_MASK, M.OPT_ROUTER, M.OPT_DNS, M.OPT_DOMAIN, M.OPT_NTP)
 
 	-- End
 	pkt = pkt .. string.char(M.OPT_END)
@@ -165,6 +166,13 @@ function M.decode(pkt)
 				for i = 1, len, 4 do
 					if i + 3 <= len then
 						result.dns[#result.dns + 1] = bytes_to_ip(data, i)
+					end
+				end
+			elseif code == M.OPT_NTP then
+				result.ntp = result.ntp or {}
+				for i = 1, len, 4 do
+					if i + 3 <= len then
+						result.ntp[#result.ntp + 1] = bytes_to_ip(data, i)
 					end
 				end
 			elseif code == M.OPT_DOMAIN then

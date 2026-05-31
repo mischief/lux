@@ -46,7 +46,7 @@ function M.run(ipc_fd, server, debug_mode, verbose)
 
 	local ibuf = imsg.new(ipc_fd)
 
-	-- If no server given, wait for one from main
+	-- Default server, may be overridden by DHCP option 42
 	if not server then
 		server = "pool.ntp.org"
 	end
@@ -57,6 +57,26 @@ function M.run(ipc_fd, server, debug_mode, verbose)
 	local synced = false
 
 	while true do
+		-- Check for NTP_SERVER message from main (DHCP option 42)
+		local fds_ipc = {[ipc_fd] = {events = {IN = true}}}
+		local ipc_ready = poll.poll(fds_ipc, 0)  -- non-blocking check
+		if ipc_ready and ipc_ready > 0 then
+			local ret = ibuf:read()
+			if ret then
+				while true do
+					local m = ibuf:get()
+					if not m then break end
+					if m:type() == rpc.NTP_SERVER and m:len() > 0 then
+						local new_server = m:data()
+						if new_server ~= server then
+							log.info(string.format("NTP server from DHCP: %s", new_server))
+							server = new_server
+						end
+					end
+				end
+			end
+		end
+
 		-- Resolve NTP server
 		local addrs = socket.getaddrinfo(server, tostring(NTP_PORT), {family = socket.AF_INET, socktype = socket.SOCK_DGRAM})
 		if not addrs or #addrs == 0 then

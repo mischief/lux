@@ -117,6 +117,10 @@ local function configure_interface(data)
 	if #dns > 0 then
 		write_resolv_conf(dns, domain)
 	end
+
+	-- Return NTP servers for forwarding to ntpd
+	local ntp = type(msg.ntp) == "table" and msg.ntp or (msg.ntp and {msg.ntp} or {})
+	return ntp
 end
 
 -- Deconfigure interface
@@ -350,8 +354,14 @@ local function run_main()
 					ibuf:flush()
 				elseif mtype == rpc.CONFIGURE then
 					local data = msg:len() > 0 and msg:data() or ""
-					configure_interface(data)
+					local ntp_servers = configure_interface(data)
 					configured = true
+					-- Forward NTP server to ntpd child
+					if ntp_servers and #ntp_servers > 0 then
+						ntp_ibuf:compose(rpc.NTP_SERVER, 0, 0, -1, ntp_servers[1])
+						ntp_ibuf:flush()
+						log.debug("sent NTP server " .. ntp_servers[1] .. " to ntpd")
+					end
 				elseif mtype == rpc.DECONFIGURE then
 					deconfigure_interface()
 					configured = false

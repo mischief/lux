@@ -87,6 +87,7 @@ function M.run(ipc_fd, ifname, debug_mode, verbose)
 			router = offer.router or "",
 			domain = offer.domain or "",
 			dns = offer.dns or {},
+			ntp = offer.ntp or {},
 		}
 		ibuf:compose(rpc.CONFIGURE, 0, 0, -1, rpc.encode(msg))
 		ibuf:flush()
