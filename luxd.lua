@@ -133,14 +133,19 @@ local function start_service(name)
 		-- Attach to tty if specified (must be after setsid)
 		if svc.def.tty then
 			local fcntl = require("posix.fcntl")
+			-- Close inherited stdin/stdout/stderr first
+			unistd.close(0)
+			unistd.close(1)
+			unistd.close(2)
 			local tty_fd = fcntl.open(svc.def.tty, fcntl.O_RDWR)
 			if tty_fd then
-				-- Make this the controlling terminal
-				sys.set_ctty(tty_fd)
-				unistd.dup2(tty_fd, 0)
-				unistd.dup2(tty_fd, 1)
-				unistd.dup2(tty_fd, 2)
+				-- tty_fd should be 0 since we closed 0 first
+				if tty_fd ~= 0 then unistd.dup2(tty_fd, 0) end
+				unistd.dup2(0, 1)
+				unistd.dup2(0, 2)
 				if tty_fd > 2 then unistd.close(tty_fd) end
+				-- Make this the controlling terminal
+				sys.set_ctty(0)
 			end
 		end
 		-- Set environment
