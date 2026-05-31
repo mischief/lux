@@ -1,10 +1,6 @@
 #!/usr/bin/env lua5.4
 -- SPDX-License-Identifier: ISC
 -- luxctl - lux service control tool
-local a = arg or { [0] = "luxctl" }
-local src = a[0]:match("(.+/)") or "./"
-package.path = src .. "?.lua;" .. src .. "?/init.lua;" .. package.path
-package.cpath = src .. "?.so;" .. package.cpath
 
 local rpc = require("lux.rpc")
 

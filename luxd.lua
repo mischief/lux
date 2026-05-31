@@ -2,9 +2,6 @@
 -- SPDX-License-Identifier: ISC
 -- luxd - service supervisor
 local a = arg or { [0] = "luxd" }
-local src = a[0]:match("(.+/)") or "./"
-package.path = src .. "?.lua;" .. src .. "?/init.lua;" .. package.path
-package.cpath = src .. "?.so;" .. package.cpath
 
 local unistd = require("posix.unistd")
 local wait = require("posix.sys.wait")
@@ -247,11 +244,10 @@ local function shutdown()
 	log("shutting down")
 	for name, svc in pairs(services) do
 		if svc.state == "running" and svc.pid then
-			-- Kill the process group (negative pid)
 			signal.kill(-svc.pid, signal.SIGTERM)
 		end
 	end
-	-- Wait for services to exit (up to 5 seconds)
+	-- Reap until all stopped or 5s deadline
 	local deadline = os.time() + 5
 	while os.time() < deadline do
 		local all_stopped = true
@@ -265,13 +261,15 @@ local function shutdown()
 				if svc.pid == wpid then svc.state = "stopped"; svc.pid = nil; break end
 			end
 		else
-			unistd.sleep(1)
+			-- Nothing to reap yet, brief poll to avoid busy-spin
+			poll.poll({}, 100)
 		end
 	end
 	-- Kill stragglers
 	for _, svc in pairs(services) do
 		if svc.state == "running" and svc.pid then
-			signal.kill(svc.pid, signal.SIGKILL)
+			signal.kill(-svc.pid, signal.SIGKILL)
+			wait.wait(svc.pid)
 			svc.state = "stopped"
 			svc.pid = nil
 		end
@@ -281,17 +279,28 @@ end
 
 -- Main
 signal.signal(signal.SIGPIPE, signal.SIG_IGN)
-signal.signal(signal.SIGTERM, function() shutdown_requested = true end)
-signal.signal(signal.SIGINT, function() shutdown_requested = true end)
 
--- Self-pipe for SIGCHLD notification
+-- Self-pipes for signal notification
 local chld_r, chld_w = unistd.pipe()
--- Set write end non-blocking so handler never blocks
+local term_r, term_w = unistd.pipe()
 local flags = fcntl.fcntl(chld_w, fcntl.F_GETFL)
 fcntl.fcntl(chld_w, fcntl.F_SETFL, flags + fcntl.O_NONBLOCK)
+flags = fcntl.fcntl(term_w, fcntl.F_GETFL)
+fcntl.fcntl(term_w, fcntl.F_SETFL, flags + fcntl.O_NONBLOCK)
+-- Also make read ends non-blocking for draining
+flags = fcntl.fcntl(chld_r, fcntl.F_GETFL)
+fcntl.fcntl(chld_r, fcntl.F_SETFL, flags + fcntl.O_NONBLOCK)
+flags = fcntl.fcntl(term_r, fcntl.F_GETFL)
+fcntl.fcntl(term_r, fcntl.F_SETFL, flags + fcntl.O_NONBLOCK)
 
 signal.signal(signal.SIGCHLD, function()
-	unistd.write(chld_w, "x")
+	unistd.write(chld_w, "c")
+end)
+signal.signal(signal.SIGTERM, function()
+	unistd.write(term_w, "t")
+end)
+signal.signal(signal.SIGINT, function()
+	unistd.write(term_w, "t")
 end)
 
 -- Mount essential API filesystems when running as PID 1
@@ -416,6 +425,7 @@ while running do
 	local fds = {
 		[srv_fd] = { events = { IN = true } },
 		[chld_r] = { events = { IN = true } },
+		[term_r] = { events = { IN = true } },
 	}
 	-- Add service listen sockets
 	for _, svc in pairs(services) do
@@ -471,6 +481,12 @@ while running do
 				break
 			end
 		end
+	end
+
+	-- Check for SIGTERM/SIGINT
+	if fds[term_r].revents and fds[term_r].revents.IN then
+		while unistd.read(term_r, 64) do end
+		shutdown_requested = true
 	end
 
 	if shutdown_requested then
