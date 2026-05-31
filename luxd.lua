@@ -24,17 +24,15 @@ local sys = require("lux.sys")
 local sock_path = "/run/lux.sock"
 local svc_dir = "/etc/lux/services"
 local boot_script = "/etc/lux/boot"
-local do_mount = false
 
 -- Parse options
 local optind = 1
-for opt, optarg, oi in unistd.getopt(a, "s:d:b:mh") do
+for opt, optarg, oi in unistd.getopt(a, "s:d:b:h") do
 	if opt == "s" then sock_path = optarg
 	elseif opt == "d" then svc_dir = optarg
 	elseif opt == "b" then boot_script = optarg
-	elseif opt == "m" then do_mount = true
 	elseif opt == "h" then
-		unistd.write(1, "usage: luxd [-s sock_path] [-d services_dir] [-b boot_script] [-m]\n")
+		unistd.write(1, "usage: luxd [-s sock_path] [-d services_dir] [-b boot_script]\n")
 		os.exit(0)
 	end
 	optind = oi
@@ -290,7 +288,8 @@ signal.signal(signal.SIGCHLD, function()
 	unistd.write(chld_w, "x")
 end)
 
-if do_mount then mount_fs() end
+-- Mount essential API filesystems when running as PID 1
+if unistd.getpid() == 1 then mount_fs() end
 
 -- Set a sane default environment for all children
 if not os.getenv("PATH") then
