@@ -8,6 +8,7 @@ package.cpath = src .. "?.so;" .. package.cpath
 
 local unistd = require("posix.unistd")
 local wait = require("posix.sys.wait")
+local ptime = require("posix.time")
 local signal = require("posix.signal")
 local stat = require("posix.sys.stat")
 local stdlib = require("posix.stdlib")
@@ -164,7 +165,7 @@ local function stop_service(name)
 			log("stopped %s", name)
 			return true
 		end
-		unistd.nanosleep(0, 100000000) -- 100ms
+		ptime.nanosleep({tv_sec=0, tv_nsec=100000000}) -- 100ms
 	end
 
 	-- Force kill
@@ -227,23 +228,32 @@ end
 local function shutdown()
 	log("shutting down")
 	for name, svc in pairs(services) do
-		if svc.state == "running" then
-			signal.kill(svc.pid, signal.SIGTERM)
+		if svc.state == "running" and svc.pid then
+			-- Kill the process group (negative pid)
+			signal.kill(-svc.pid, signal.SIGTERM)
 		end
 	end
-	-- Wait briefly
-	for _ = 1, 30 do
-		local wpid = wait.wait(-1, wait.WNOHANG)
-		if not wpid or wpid <= 0 then break end
+	-- Wait up to 5 seconds
+	for _ = 1, 50 do
+		local all_stopped = true
 		for _, svc in pairs(services) do
-			if svc.pid == wpid then svc.state = "stopped"; svc.pid = nil end
+			if svc.state == "running" then all_stopped = false; break end
 		end
-		unistd.nanosleep(0, 100000000)
+		if all_stopped then break end
+		local wpid = wait.wait(-1, wait.WNOHANG)
+		if wpid and wpid > 0 then
+			for _, svc in pairs(services) do
+				if svc.pid == wpid then svc.state = "stopped"; svc.pid = nil; break end
+			end
+		end
+		ptime.nanosleep({tv_sec=0, tv_nsec=100000000})
 	end
 	-- Kill stragglers
 	for _, svc in pairs(services) do
 		if svc.state == "running" and svc.pid then
-			signal.kill(svc.pid, signal.SIGKILL)
+			signal.kill(-svc.pid, signal.SIGKILL)
+			svc.state = "stopped"
+			svc.pid = nil
 		end
 	end
 	log("halted")
