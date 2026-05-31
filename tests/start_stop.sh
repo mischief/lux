@@ -3,11 +3,11 @@
 # Test: luxd starts and responds to luxctl shutdown
 set -e
 D="$(cd "$(dirname "$0")/.." && pwd)"
-TMPDIR=$(mktemp -d)
-trap 'kill $PID 2>/dev/null; wait $PID 2>/dev/null; rm -rf "$TMPDIR"' EXIT
+TESTDIR=$(mktemp -d)
+trap 'kill $PID 2>/dev/null; wait $PID 2>/dev/null; rm -rf "$TESTDIR"' EXIT
 
-mkdir -p "$TMPDIR/services"
-lua5.4 "$D/luxd.lua" -s "$TMPDIR/lux.sock" -d "$TMPDIR/services" 2>/dev/null &
+mkdir -p "$TESTDIR/services"
+lua5.4 "$D/luxd.lua" -s "$TESTDIR/lux.sock" -d "$TESTDIR/services" 2>/dev/null &
 PID=$!
 sleep 1
 
@@ -15,4 +15,4 @@ sleep 1
 kill -0 $PID
 
 # Verify control socket works
-lua5.4 "$D/luxctl.lua" -s "$TMPDIR/lux.sock" status >/dev/null
+lua5.4 "$D/luxctl.lua" -s "$TESTDIR/lux.sock" status >/dev/null

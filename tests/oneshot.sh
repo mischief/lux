@@ -2,19 +2,19 @@
 # SPDX-License-Identifier: ISC
 set -e
 D="$(cd "$(dirname "$0")/.." && pwd)"
-TMPDIR=$(mktemp -d)
-trap 'kill $PID 2>/dev/null; wait $PID 2>/dev/null; rm -rf "$TMPDIR"' EXIT
+TESTDIR=$(mktemp -d)
+trap 'kill $PID 2>/dev/null; wait $PID 2>/dev/null; rm -rf "$TESTDIR"' EXIT
 
-mkdir -p "$TMPDIR/services"
-cat > "$TMPDIR/services/setup.lua" << 'EOF'
+mkdir -p "$TESTDIR/services"
+cat > "$TESTDIR/services/setup.lua" << 'EOF'
 service "setup" {
     cmd = { "true" },
 }
 EOF
 
-lua5.4 "$D/luxd.lua" -s "$TMPDIR/lux.sock" -d "$TMPDIR/services" &
+lua5.4 "$D/luxd.lua" -s "$TESTDIR/lux.sock" -d "$TESTDIR/services" 2>/dev/null &
 PID=$!
 sleep 1
 
-OUT=$(lua5.4 "$D/luxctl.lua" -s "$TMPDIR/lux.sock" status)
+OUT=$(lua5.4 "$D/luxctl.lua" -s "$TESTDIR/lux.sock" status)
 echo "$OUT" | grep "setup" | grep -q "done"
