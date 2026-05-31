@@ -13,6 +13,8 @@ local signal = require("posix.signal")
 local stat = require("posix.sys.stat")
 local stdlib = require("posix.stdlib")
 local socket = require("posix.sys.socket")
+local fcntl = require("posix.fcntl")
+local poll = require("posix.poll")
 local dirent = require("posix.dirent")
 local imsg = require("imsg")
 local rpc = require("lux.rpc")
@@ -132,7 +134,6 @@ local function start_service(name)
 		signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 		-- Attach to tty if specified (must be after setsid)
 		if svc.def.tty then
-			local fcntl = require("posix.fcntl")
 			local tty_fd = fcntl.open(svc.def.tty, fcntl.O_RDWR)
 			if tty_fd then
 				-- Make this the controlling terminal
@@ -281,7 +282,6 @@ signal.signal(signal.SIGINT, function() shutdown_requested = true end)
 -- Self-pipe for SIGCHLD notification
 local chld_r, chld_w = unistd.pipe()
 -- Set write end non-blocking so handler never blocks
-local fcntl = require("posix.fcntl")
 local flags = fcntl.fcntl(chld_w, fcntl.F_GETFL)
 fcntl.fcntl(chld_w, fcntl.F_SETFL, flags + fcntl.O_NONBLOCK)
 
@@ -395,7 +395,6 @@ socket.listen(srv_fd, 5)
 log("listening on %s", sock_path)
 
 -- Main loop
-local poll = require("posix.poll")
 
 while running do
 	local fds = {
