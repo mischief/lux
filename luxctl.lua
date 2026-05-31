@@ -3,7 +3,8 @@
 -- luxctl - lux service control tool
 local a = arg or { [0] = "luxctl" }
 local src = a[0]:match("(.+/)") or "./"
-package.path = src .. "?.lua;" .. package.path
+package.path = src .. "?.lua;" .. src .. "?/init.lua;" .. package.path
+package.cpath = src .. "?.so;" .. package.cpath
 
 local rpc = require("lux.rpc")
 

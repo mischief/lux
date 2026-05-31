@@ -8,9 +8,22 @@ lua_name = get_option('lua')
 lua_ver = lua_name.replace('lua', '')
 lua_dep = dependency(lua_name)
 lua_mod_dir = get_option('datadir') / 'lua' / lua_ver
+lua_lib_dir = get_option('libdir') / 'lua' / lua_ver
 
-imsg_dep = dependency('imsg', fallback: ['libimsg', 'imsg_dep'])
+# Native module: lux.sys
+shared_library('sys', 'sys.c',
+  dependencies: lua_dep,
+  name_prefix: '',
+  install: true,
+  install_dir: lua_lib_dir / 'lux',
+)
 
+# Lua modules
+install_data('rpc.lua',
+  install_dir: lua_mod_dir / 'lux',
+)
+
+# Executables
 install_data('luxd.lua',
   rename: 'luxd',
   install_dir: get_option('sbindir'),
@@ -21,8 +34,4 @@ install_data('luxctl.lua',
   rename: 'luxctl',
   install_dir: get_option('sbindir'),
   install_mode: 'rwxr-xr-x',
-)
-
-install_data('rpc.lua',
-  install_dir: lua_mod_dir / 'lux',
 )

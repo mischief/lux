@@ -17,7 +17,8 @@ M.ACK      = 6
 -- Default socket path
 M.SOCK_PATH = "/run/lux.sock"
 
--- Server: accept one connection, read one message, return ibuf + msg
+-- Server: accept one connection, read one message
+-- Returns ibuf, msg_type, msg_data, client_fd
 function M.accept(srv_fd)
 	local client_fd = socket.accept(srv_fd)
 	if not client_fd then return nil end
@@ -28,14 +29,16 @@ function M.accept(srv_fd)
 		unistd.close(client_fd)
 		return nil
 	end
-	return ibuf, msg, client_fd
+	-- Extract data before any further ibuf operations
+	local msg_type = msg:type()
+	local msg_data = msg:len() > 0 and msg:data() or ""
+	return ibuf, msg_type, msg_data, client_fd
 end
 
--- Server: send reply and close
+-- Server: send reply
 function M.reply(ibuf, client_fd, payload)
 	ibuf:compose(M.ACK, 0, 0, -1, payload or "")
 	ibuf:flush()
-	unistd.close(client_fd)
 end
 
 -- Client: connect, send a message, receive reply, close
@@ -51,7 +54,9 @@ function M.call(sock_path, msg_type, payload)
 	ibuf:read()
 	local msg = ibuf:get()
 	unistd.close(fd)
-	if msg then return msg:data() end
+	if msg then
+		return msg:len() > 0 and msg:data() or ""
+	end
 	return nil, "no response"
 end
 

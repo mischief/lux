@@ -3,7 +3,8 @@
 -- luxd - service supervisor
 local a = arg or { [0] = "luxd" }
 local src = a[0]:match("(.+/)") or "./"
-package.path = src .. "?.lua;" .. package.path
+package.path = src .. "?.lua;" .. src .. "?/init.lua;" .. package.path
+package.cpath = src .. "?.so;" .. package.cpath
 
 local unistd = require("posix.unistd")
 local wait = require("posix.sys.wait")
@@ -14,6 +15,7 @@ local socket = require("posix.sys.socket")
 local dirent = require("posix.dirent")
 local imsg = require("imsg")
 local rpc = require("lux.rpc")
+local sys = require("lux.sys")
 
 -- Defaults
 local sock_path = "/run/lux.sock"
@@ -47,11 +49,9 @@ end
 
 -- Mount essential filesystems (only when -m, i.e. running as real init)
 local function mount_fs()
-	local ok, notposix = pcall(require, "notposix")
-	if not ok then return end
 	local function mnt(s, t, fs)
 		pcall(stat.mkdir, t, tonumber("755", 8))
-		notposix.mount(s, t, fs)
+		sys.mount(s, t, fs)
 	end
 	mnt("proc", "/proc", "proc")
 	mnt("sysfs", "/sys", "sysfs")
@@ -125,7 +125,7 @@ local function start_service(name)
 	local pid = unistd.fork()
 	if pid == 0 then
 		-- Child
-		unistd.setsid()
+		sys.setsid()
 		signal.signal(signal.SIGINT, signal.SIG_DFL)
 		signal.signal(signal.SIGTERM, signal.SIG_DFL)
 		signal.signal(signal.SIGPIPE, signal.SIG_DFL)
@@ -190,10 +190,7 @@ local function status_string()
 end
 
 -- Handle control message
-local function handle_message(ibuf, msg, client_fd)
-	local typ = msg:type()
-	local data = msg:data() or ""
-
+local function handle_message(ibuf, typ, data, client_fd)
 	if typ == rpc.START then
 		local ok, err = start_service(data)
 		rpc.reply(ibuf, client_fd, ok and "ok" or ("error: " .. (err or "")))
@@ -392,9 +389,9 @@ while running do
 
 	-- Check for control connections
 	if fds[srv_fd].revents and fds[srv_fd].revents.IN then
-		local ibuf, msg, client_fd = rpc.accept(srv_fd)
-		if ibuf and msg then
-			handle_message(ibuf, msg, client_fd)
+		local ibuf, typ, data, client_fd = rpc.accept(srv_fd)
+		if ibuf then
+			handle_message(ibuf, typ, data, client_fd)
 		end
 	end
 
