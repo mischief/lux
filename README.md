@@ -172,11 +172,15 @@ lux.rpc     Shared IPC protocol (imsg message types, connect/accept/reply)
 
 ### Main Loop
 
-luxd uses `poll(2)` on three fd classes simultaneously:
+luxd uses `poll(2)` on multiple fd classes simultaneously:
 
 - **Control socket** (`/run/lux.sock`) — accepts luxctl connections
 - **SIGCHLD self-pipe** — wakes on child exit for immediate reaping
+- **SIGTERM self-pipe** — wakes on termination signal for clean shutdown
 - **Service listen sockets** — triggers socket activation
+
+The poll timeout is 1 second, ensuring periodic reaping even if
+`SA_RESTART` prevents the self-pipe from waking poll.
 
 ### Process Lifecycle
 
@@ -199,9 +203,13 @@ When starting a service with `run`:
 
 1. `luxctl shutdown` sends `MSG_SHUTDOWN` via imsg
 2. luxd sends `SIGTERM` to all service process groups (`kill(-pid)`)
-3. Waits up to 5 seconds for exits
+3. Polls `waitpid(WNOHANG)` in a loop (up to 5 seconds)
 4. Sends `SIGKILL` to stragglers
 5. Calls `reboot(RB_POWER_OFF)` if PID 1
+
+Note: `luxctl stop` is asynchronous — it sends SIGTERM and returns
+immediately. The service transitions to "stopped" when the reap loop
+processes the child exit.
 
 ### IPC Protocol
 
