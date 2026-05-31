@@ -1,2 +1,4 @@
 build/
 subprojects/libimsg/
+subprojects/.wraplock
+lux/*.so
