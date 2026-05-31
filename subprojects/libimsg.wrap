@@ -1,0 +1,7 @@
+[wrap-git]
+directory = libimsg
+url = https://github.com/mischief/libimsg.git
+revision = main
+
+[provide]
+imsg = imsg_dep

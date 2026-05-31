@@ -1,0 +1,329 @@
+#!/usr/bin/env lua5.4
+-- SPDX-License-Identifier: ISC
+-- luxd - service supervisor
+local a = arg or { [0] = "luxd" }
+local src = a[0]:match("(.+/)") or "./"
+package.path = src .. "?.lua;" .. package.path
+
+local unistd = require("posix.unistd")
+local wait = require("posix.sys.wait")
+local signal = require("posix.signal")
+local stat = require("posix.sys.stat")
+local stdlib = require("posix.stdlib")
+local socket = require("posix.sys.socket")
+local dirent = require("posix.dirent")
+local imsg = require("imsg")
+
+-- Message types
+local MSG_START    = 1
+local MSG_STOP     = 2
+local MSG_RESTART  = 3
+local MSG_STATUS   = 4
+local MSG_SHUTDOWN = 5
+local MSG_ACK      = 6
+
+-- Defaults
+local sock_path = "/run/lux.sock"
+local svc_dir = "/etc/lux/services"
+local boot_script = "/etc/lux/boot"
+local do_mount = false
+
+-- Parse options
+local optind = 1
+for opt, optarg, oi in unistd.getopt(a, "s:d:b:mh") do
+	if opt == "s" then sock_path = optarg
+	elseif opt == "d" then svc_dir = optarg
+	elseif opt == "b" then boot_script = optarg
+	elseif opt == "m" then do_mount = true
+	elseif opt == "h" then
+		unistd.write(1, "usage: luxd [-s sock_path] [-d services_dir] [-b boot_script] [-m]\n")
+		os.exit(0)
+	end
+	optind = oi
+end
+
+-- State
+local services = {} -- name -> {def, pid, state}
+local running = true
+local shutdown_requested = false
+
+-- Logging
+local function log(fmt, ...)
+	unistd.write(2, "luxd: " .. string.format(fmt, ...) .. "\n")
+end
+
+-- Mount essential filesystems (only when -m, i.e. running as real init)
+local function mount_fs()
+	local ok, notposix = pcall(require, "notposix")
+	if not ok then return end
+	local function mnt(s, t, fs)
+		pcall(stat.mkdir, t, tonumber("755", 8))
+		notposix.mount(s, t, fs)
+	end
+	mnt("proc", "/proc", "proc")
+	mnt("sysfs", "/sys", "sysfs")
+	mnt("devtmpfs", "/dev", "devtmpfs")
+	mnt("tmpfs", "/tmp", "tmpfs")
+	mnt("tmpfs", "/run", "tmpfs")
+	pcall(stat.mkdir, "/dev/pts", tonumber("755", 8))
+	mnt("devpts", "/dev/pts", "devpts")
+end
+
+-- DSL: service definitions
+-- Each .lua file is executed in a sandbox where service("name") { ... } registers a service
+local function load_services()
+	local entries = dirent.dir(svc_dir)
+	if not entries then
+		log("cannot read services directory: %s", svc_dir)
+		return
+	end
+
+	for _, entry in ipairs(entries) do
+		if entry:match("%.lua$") then
+			local path = svc_dir .. "/" .. entry
+			local registered = {}
+
+			local env = setmetatable({
+				service = function(name)
+					return function(def)
+						def.name = name
+						registered[#registered + 1] = def
+					end
+				end,
+			}, { __index = _G })
+
+			local fn, err = loadfile(path, "t", env)
+			if fn then
+				local ok2, err2 = pcall(fn)
+				if not ok2 then log("error in %s: %s", path, err2) end
+			else
+				log("cannot load %s: %s", path, err)
+			end
+
+			for _, def in ipairs(registered) do
+				if def.name and def.cmd then
+					services[def.name] = {
+						def = def,
+						pid = nil,
+						state = "stopped",
+					}
+				end
+			end
+		end
+	end
+end
+
+-- Start a service
+local function start_service(name)
+	local svc = services[name]
+	if not svc then return false, "unknown service: " .. name end
+	if svc.state == "running" then return true end
+
+	-- Check dependencies
+	if svc.def.depends then
+		for _, dep in ipairs(svc.def.depends) do
+			if not services[dep] or services[dep].state ~= "running" then
+				local ok, err = start_service(dep)
+				if not ok then return false, "dependency failed: " .. dep .. ": " .. (err or "") end
+			end
+		end
+	end
+
+	local pid = unistd.fork()
+	if pid == 0 then
+		-- Child
+		unistd.setsid()
+		signal.signal(signal.SIGINT, signal.SIG_DFL)
+		signal.signal(signal.SIGTERM, signal.SIG_DFL)
+		signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+		-- Set environment
+		if svc.def.env then
+			for k, v in pairs(svc.def.env) do
+				stdlib.setenv(k, v, true)
+			end
+		end
+		-- Exec
+		local cmd = svc.def.cmd
+		unistd.execp(cmd[1], { table.unpack(cmd, 2) })
+		os.exit(127)
+	end
+
+	svc.pid = pid
+	svc.state = "running"
+	log("started %s (pid %d)", name, pid)
+	return true
+end
+
+-- Stop a service
+local function stop_service(name)
+	local svc = services[name]
+	if not svc then return false, "unknown service: " .. name end
+	if svc.state ~= "running" then return true end
+
+	signal.kill(svc.pid, signal.SIGTERM)
+
+	-- Wait up to 5 seconds
+	for _ = 1, 50 do
+		local wpid = wait.wait(svc.pid, wait.WNOHANG)
+		if wpid and wpid > 0 then
+			svc.state = "stopped"
+			svc.pid = nil
+			log("stopped %s", name)
+			return true
+		end
+		unistd.nanosleep(0, 100000000) -- 100ms
+	end
+
+	-- Force kill
+	signal.kill(svc.pid, signal.SIGKILL)
+	wait.wait(svc.pid)
+	svc.state = "stopped"
+	svc.pid = nil
+	log("killed %s", name)
+	return true
+end
+
+-- Status string
+local function status_string()
+	local lines = {}
+	for name, svc in pairs(services) do
+		local pid_str = svc.pid and tostring(svc.pid) or "-"
+		lines[#lines + 1] = string.format("%-20s %-10s pid=%-8s %s",
+			name, svc.state, pid_str,
+			svc.def.cmd and table.concat(svc.def.cmd, " ") or "")
+	end
+	table.sort(lines)
+	return table.concat(lines, "\n") .. "\n"
+end
+
+-- Handle control message
+local function handle_message(ibuf, msg)
+	local typ = msg:type()
+	local data = msg:data() or ""
+
+	if typ == MSG_START then
+		local ok, err = start_service(data)
+		ibuf:compose(MSG_ACK, 0, 0, -1, ok and "ok" or ("error: " .. (err or "")))
+		ibuf:flush()
+	elseif typ == MSG_STOP then
+		local ok, err = stop_service(data)
+		ibuf:compose(MSG_ACK, 0, 0, -1, ok and "ok" or ("error: " .. (err or "")))
+		ibuf:flush()
+	elseif typ == MSG_RESTART then
+		stop_service(data)
+		start_service(data)
+		ibuf:compose(MSG_ACK, 0, 0, -1, "ok")
+		ibuf:flush()
+	elseif typ == MSG_STATUS then
+		ibuf:compose(MSG_ACK, 0, 0, -1, status_string())
+		ibuf:flush()
+	elseif typ == MSG_SHUTDOWN then
+		shutdown_requested = true
+		ibuf:compose(MSG_ACK, 0, 0, -1, "shutting down")
+		ibuf:flush()
+	end
+end
+
+-- Run boot script
+local function run_boot()
+	if unistd.access(boot_script, "x") ~= 0 then return end
+	log("running %s", boot_script)
+	local pid = unistd.fork()
+	if pid == 0 then
+		unistd.execp("/bin/sh", { "-c", boot_script })
+		os.exit(127)
+	end
+	wait.wait(pid)
+end
+
+-- Shutdown
+local function shutdown()
+	log("shutting down")
+	for name, svc in pairs(services) do
+		if svc.state == "running" then
+			signal.kill(svc.pid, signal.SIGTERM)
+		end
+	end
+	-- Wait briefly
+	for _ = 1, 30 do
+		local wpid = wait.wait(-1, wait.WNOHANG)
+		if not wpid or wpid <= 0 then break end
+		for _, svc in pairs(services) do
+			if svc.pid == wpid then svc.state = "stopped"; svc.pid = nil end
+		end
+		unistd.nanosleep(0, 100000000)
+	end
+	-- Kill stragglers
+	for _, svc in pairs(services) do
+		if svc.state == "running" and svc.pid then
+			signal.kill(svc.pid, signal.SIGKILL)
+		end
+	end
+	log("halted")
+end
+
+-- Main
+signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+signal.signal(signal.SIGTERM, function() shutdown_requested = true end)
+signal.signal(signal.SIGINT, function() shutdown_requested = true end)
+
+if do_mount then mount_fs() end
+run_boot()
+load_services()
+
+-- Start all services
+for name in pairs(services) do
+	start_service(name)
+end
+
+-- Create control socket
+pcall(os.remove, sock_path)
+pcall(stat.mkdir, sock_path:match("^(.+)/"), tonumber("755", 8))
+local srv_fd = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+socket.bind(srv_fd, { family = socket.AF_UNIX, path = sock_path })
+socket.listen(srv_fd, 5)
+log("listening on %s", sock_path)
+
+-- Main loop
+local poll = require("posix.poll")
+
+while running do
+	local ready = poll.poll({ [srv_fd] = { events = { IN = true } } }, 200)
+
+	if ready and ready > 0 then
+		local client_fd = socket.accept(srv_fd)
+		if client_fd then
+			local ibuf = imsg.new(client_fd)
+			ibuf:read()
+			local msg = ibuf:get()
+			if msg then handle_message(ibuf, msg) end
+			unistd.close(client_fd)
+		end
+	end
+
+	-- Reap children
+	while true do
+		local wpid, reason, status = wait.wait(-1, wait.WNOHANG)
+		if not wpid or wpid <= 0 then break end
+		for name, svc in pairs(services) do
+			if svc.pid == wpid then
+				log("%s exited (%s %d)", name, reason or "?", status or 0)
+				svc.pid = nil
+				svc.state = "stopped"
+				-- Restart if configured and not shutting down
+				if not shutdown_requested and svc.def.restart then
+					log("restarting %s", name)
+					start_service(name)
+				end
+				break
+			end
+		end
+	end
+
+	if shutdown_requested then
+		shutdown()
+		running = false
+	end
+end
+
+os.remove(sock_path)
