@@ -61,7 +61,7 @@ install_data('luxctl.lua',
   install_mode: 'rwxr-xr-x',
 )
 
-install_data('services/logd.lua',
+install_data('logd.lua',
   rename: 'logd',
   install_dir: get_option('sbindir'),
   install_mode: 'rwxr-xr-x',
@@ -70,7 +70,7 @@ install_data('services/logd.lua',
 # Default service definitions
 install_data(
   'services/console.lua',
-  'services/logd-svc.lua',
+  'services/logd.lua',
   install_dir: get_option('datadir') / 'lux' / 'services',
 )
 
