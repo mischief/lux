@@ -171,6 +171,12 @@ local function run_main()
 
 	log.info(string.format("starting on %s", ifname))
 
+	-- Bring interface up (no address) so kernel allows sending
+	local ok, err = sys.if_up(ifname)
+	if not ok then
+		log.fatal(string.format("if_up %s: %s", ifname, err))
+	end
+
 	-- Create socketpair for imsg IPC
 	local sv = {socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)}
 	if not sv[1] then
