@@ -207,12 +207,16 @@ function M.run(ipc_fd, ifname, debug_mode, verbose)
 					state = STATE_INIT
 					retries = 0
 					next_action = now()
+					ibuf:compose(rpc.CTL_REPLY, 0, 0, -1, "ok")
+					ibuf:flush()
 				elseif mt == rpc.CTL_RELEASE then
 					log.info("release requested")
 					send_deconfigure()
 					state = STATE_INIT
 					retries = 0
 					next_action = now() + 86400 -- don't re-acquire immediately
+					ibuf:compose(rpc.CTL_REPLY, 0, 0, -1, "ok")
+					ibuf:flush()
 				end
 			end
 		end
