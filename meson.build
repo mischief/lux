@@ -80,6 +80,28 @@ install_data(
   install_dir: get_option('datadir') / 'lux' / 'services',
 )
 
+# Tests
+sh = find_program('sh')
+test_env = environment()
+test_env.append('LUA_CPATH', meson.current_build_dir() / '?.so', separator: ';')
+test_env.append('LUA_PATH', meson.current_source_dir() / '?.lua', separator: ';')
+test_env.append('LUA_PATH', meson.current_source_dir() / 'lux/?.lua', separator: ';')
+
+tests = [
+  'start_stop',
+  'status',
+  'stop_start',
+  'shutdown',
+]
+
+foreach t : tests
+  test('lux.' + t, sh,
+    args: [meson.current_source_dir() / 'tests' / t + '.sh'],
+    env: test_env,
+    timeout: 15,
+  )
+endforeach
+
 # Optional: install as init symlink in sbindir
 if get_option('as_init')
   install_symlink('init',
