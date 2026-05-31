@@ -2,14 +2,12 @@
 -- SPDX-License-Identifier: ISC
 -- netd - DHCP client daemon with privilege separation
 --
--- Two-process model:
---   main (root): opens sockets, applies interface config, writes resolv.conf
---   engine (unprivileged): DHCP state machine, packet I/O
+-- Two-process model (re-exec, like OpenBSD dhcpleased):
+--   netd [-dv] <iface>      → main (root)
+--   netd -E [-dv] <iface>   → engine (unprivileged, re-exec'd by main)
 --
--- IPC via imsg with fd passing. Main opens privileged UDP socket and passes
--- it to engine. Engine requests MAC and sends CONFIGURE/DECONFIGURE back.
---
--- Usage: netd [-dv] <interface>
+-- Main opens privileged sockets, re-execs engine child with IPC fd on fd 3.
+-- Engine drops privileges, runs DHCP state machine.
 
 local unistd = require("posix.unistd")
 local socket = require("posix.sys.socket")
@@ -17,17 +15,21 @@ local wait = require("posix.sys.wait")
 local signal = require("posix.signal")
 local pwd = require("posix.pwd")
 local poll = require("posix.poll")
+local fcntl = require("posix.fcntl")
 local syslog = require("posix.syslog")
 local imsg = require("imsg")
 local log = require("net.log")
 local sys = require("net.sys")
 local rpc = require("net.rpc")
+local engine = require("net.engine")
 
 local NETD_USER = "nobody"
 local RESOLV_CONF = "/etc/resolv.conf"
+local IPC_FD = 3
 
 local debug_mode = false
 local verbose = false
+local engine_mode = false
 local ifname = nil
 
 local function usage()
@@ -37,10 +39,11 @@ end
 
 local function parse_args()
 	local optind = 1
-	for opt, optarg, oi in unistd.getopt(arg, "dv") do
+	for opt, optarg, oi in unistd.getopt(arg, "dvE") do
 		if opt == "?" then usage() end
 		if opt == "d" then debug_mode = true end
 		if opt == "v" then verbose = true end
+		if opt == "E" then engine_mode = true end
 		optind = oi
 	end
 	ifname = arg[optind]
@@ -127,20 +130,43 @@ local function read_mac()
 	return mac
 end
 
-local function main()
-	parse_args()
+-- Engine process: entered via netd -E
+local function run_engine()
+	log.procinit("engine")
+	log.init(debug_mode, syslog.LOG_DAEMON)
+	if verbose then log.setverbose(true) end
 
+	-- IPC fd is 3 (inherited from parent)
+	local pw = pwd.getpwnam(NETD_USER)
+	if not pw then
+		log.fatal("unknown user: " .. NETD_USER)
+	end
+
+	-- Drop privileges
+	local r, e
+	r, e = sys.chroot("/var/empty")
+	if not r then log.fatal("chroot: " .. e) end
+	unistd.chdir("/")
+	r, e = sys.setgroups(pw.pw_gid)
+	if not r then log.fatal("setgroups: " .. e) end
+	r, e = sys.setresgid(pw.pw_gid, pw.pw_gid, pw.pw_gid)
+	if not r then log.fatal("setresgid: " .. e) end
+	r, e = sys.setresuid(pw.pw_uid, pw.pw_uid, pw.pw_uid)
+	if not r then log.fatal("setresuid: " .. e) end
+
+	log.debug("privileges dropped")
+
+	engine.run(IPC_FD, ifname, debug_mode, verbose)
+end
+
+-- Main process
+local function run_main()
 	log.procinit("netd")
 	log.init(debug_mode, syslog.LOG_DAEMON)
 	if verbose then log.setverbose(true) end
 
 	if unistd.geteuid() ~= 0 then
 		log.fatal("need root privileges")
-	end
-
-	local pw = pwd.getpwnam(NETD_USER)
-	if not pw then
-		log.fatal("unknown user: " .. NETD_USER)
 	end
 
 	log.info(string.format("starting on %s", ifname))
@@ -168,37 +194,29 @@ local function main()
 		log.fatal("bind port 68: " .. tostring(berr))
 	end
 
-	-- Fork engine child
+	-- Start engine child via re-exec
 	local pid = unistd.fork()
 	if pid == -1 then
 		log.fatal("fork failed")
 	end
 
 	if pid == 0 then
-		-- Engine child
+		-- Child: set up fd 3 as IPC, close parent's end
 		unistd.close(main_fd)
-		unistd.close(udp_fd) -- will receive it back via imsg
-		log.procinit("engine")
-
-		-- Load engine before chroot (filesystem unavailable after)
-		local engine = require("net.engine")
-
-		-- Drop privileges
-		local r, e
-		r, e = sys.chroot("/var/empty")
-		if not r then log.fatal("chroot: " .. e) end
-		unistd.chdir("/")
-		r, e = sys.setgroups(pw.pw_gid)
-		if not r then log.fatal("setgroups: " .. e) end
-		r, e = sys.setresgid(pw.pw_gid, pw.pw_gid, pw.pw_gid)
-		if not r then log.fatal("setresgid: " .. e) end
-		r, e = sys.setresuid(pw.pw_uid, pw.pw_uid, pw.pw_uid)
-		if not r then log.fatal("setresuid: " .. e) end
-
-		log.debug("privileges dropped")
-
-		engine.run(engine_fd, ifname, debug_mode, verbose)
-		os.exit(0)
+		unistd.close(udp_fd)
+		if engine_fd ~= IPC_FD then
+			unistd.dup2(engine_fd, IPC_FD)
+			unistd.close(engine_fd)
+		end
+		-- Clear close-on-exec for fd 3
+		fcntl.fcntl(IPC_FD, fcntl.F_SETFD, 0)
+		-- Re-exec ourselves with -E flag
+		local argv = {arg[0], "-E"}
+		if debug_mode then argv[#argv + 1] = "-d" end
+		if verbose then argv[#argv + 1] = "-v" end
+		argv[#argv + 1] = ifname
+		unistd.execp(argv[1], {table.unpack(argv, 2)})
+		log.fatal("execp failed")
 	end
 
 	-- Main parent
@@ -238,7 +256,7 @@ local function main()
 		[ctl_fd] = {events = {IN = true}},
 	}
 	local configured = false
-	local ctl_client = nil  -- pending control client imsgbuf
+	local ctl_client = nil
 
 	while not child_dead do
 		local ready = poll.poll(fds, -1)
@@ -266,7 +284,6 @@ local function main()
 					deconfigure_interface()
 					configured = false
 				elseif mtype == rpc.CTL_REPLY then
-					-- Forward reply to control client
 					if ctl_client then
 						local data = msg:len() > 0 and msg:data() or ""
 						ctl_client:compose(rpc.CTL_REPLY, 0, 0, -1, data)
@@ -277,7 +294,7 @@ local function main()
 			end
 		end
 
-		-- Control socket: accept new connection
+		-- Control socket
 		if ready and ready > 0 and fds[ctl_fd].revents and fds[ctl_fd].revents.IN then
 			local cfd = socket.accept(ctl_fd)
 			if cfd then
@@ -289,9 +306,7 @@ local function main()
 						local mtype = msg:type()
 						if mtype == rpc.CTL_STATUS or mtype == rpc.CTL_RENEW
 							or mtype == rpc.CTL_RELEASE then
-							-- Forward to engine
-							local data = msg:len() > 0 and msg:data() or ""
-							ibuf:compose(mtype, 0, 0, -1, data)
+							ibuf:compose(mtype, 0, 0, -1, "")
 							ibuf:flush()
 							ctl_client = cbuf
 						end
@@ -314,4 +329,11 @@ local function main()
 	log.info("exiting")
 end
 
-main()
+-- Entry point
+parse_args()
+
+if engine_mode then
+	run_engine()
+else
+	run_main()
+end
