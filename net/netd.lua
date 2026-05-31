@@ -388,9 +388,7 @@ local function run_main()
 						local usec = tonumber(data.usec) or 0
 						if sec then
 							local ok, err = sys.settimeofday(sec, usec)
-							if ok then
-								log.info(string.format("clock set to %d.%06d", sec, usec))
-							else
+							if not ok then
 								log.warn("settimeofday: " .. tostring(err))
 							end
 						end
