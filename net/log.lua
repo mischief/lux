@@ -8,6 +8,8 @@ local debug_mode = false
 local verbose = false
 local procname = "netd"
 
+M.LOG_DAEMON = syslog.LOG_DAEMON
+
 function M.init(is_debug, facility)
 	debug_mode = is_debug
 	verbose = is_debug

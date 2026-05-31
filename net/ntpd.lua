@@ -8,7 +8,6 @@ local unistd = require("posix.unistd")
 local socket = require("posix.sys.socket")
 local poll = require("posix.poll")
 local time = require("posix.time")
-local syslog = require("posix.syslog")
 local imsg = require("imsg")
 local log = require("net.log")
 local rpc = require("net.rpc")
@@ -42,7 +41,7 @@ end
 
 function M.run(ipc_fd, server, debug_mode, verbose)
 	log.procinit("netd")
-	log.init(debug_mode, syslog.LOG_DAEMON)
+	log.init(debug_mode, log.LOG_DAEMON)
 	if verbose then log.setverbose(true) end
 
 	local ibuf = imsg.new(ipc_fd)

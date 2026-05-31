@@ -8,7 +8,6 @@ local unistd = require("posix.unistd")
 local socket = require("posix.sys.socket")
 local poll = require("posix.poll")
 local time = require("posix.time")
-local syslog = require("posix.syslog")
 local imsg = require("imsg")
 local log = require("net.log")
 local dhcp = require("net.dhcp")
@@ -39,7 +38,7 @@ end
 
 function M.run(ipc_fd, ifname, debug_mode, verbose)
 	log.procinit("netd")
-	log.init(debug_mode, syslog.LOG_DAEMON)
+	log.init(debug_mode, log.LOG_DAEMON)
 	if verbose then log.setverbose(true) end
 
 	-- Set up imsgbuf

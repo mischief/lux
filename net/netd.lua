@@ -17,7 +17,6 @@ local signal = require("posix.signal")
 local pwd = require("posix.pwd")
 local poll = require("posix.poll")
 local fcntl = require("posix.fcntl")
-local syslog = require("posix.syslog")
 local imsg = require("imsg")
 local log = require("net.log")
 local sys = require("net.sys")
@@ -142,7 +141,7 @@ end
 -- Engine process: entered via netd -E
 local function run_engine()
 	log.procinit("engine")
-	log.init(debug_mode, syslog.LOG_DAEMON)
+	log.init(debug_mode, log.LOG_DAEMON)
 	if verbose then log.setverbose(true) end
 
 	-- IPC fd is ENGINE_FD (inherited from parent)
@@ -171,7 +170,7 @@ end
 -- NTP child process: entered via netd -N
 local function run_ntpd()
 	log.procinit("ntpd")
-	log.init(debug_mode, syslog.LOG_DAEMON)
+	log.init(debug_mode, log.LOG_DAEMON)
 	if verbose then log.setverbose(true) end
 
 	local pw = pwd.getpwnam(NETD_USER)
@@ -199,7 +198,7 @@ end
 -- Main process
 local function run_main()
 	log.procinit("netd")
-	log.init(debug_mode, syslog.LOG_DAEMON)
+	log.init(debug_mode, log.LOG_DAEMON)
 	if verbose then log.setverbose(true) end
 
 	if unistd.geteuid() ~= 0 then
