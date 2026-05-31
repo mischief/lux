@@ -73,9 +73,13 @@ end
 local function parse_syslog(raw)
 	local pri, msg = raw:match("^<(%d+)>(.*)")
 	if pri then
+		-- Strip BSD syslog header: "Mon DD HH:MM:SS hostname " if present
+		msg = msg:match("^%a+%s+%d+%s+%d+:%d+:%d+%s+%S+%s+(.*)") or msg
+		-- Strip trailing newline
+		msg = msg:gsub("\n$", "")
 		return tonumber(pri), msg
 	end
-	return nil, raw
+	return nil, raw:gsub("\n$", "")
 end
 
 -- Facility names
