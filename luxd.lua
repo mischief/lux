@@ -392,7 +392,7 @@ local function handle_socket_activation(name, svc)
 				unistd.dup2(svc.listen_fd, 3)
 				unistd.close(svc.listen_fd)
 			end
-			unistd.setsid()
+			sys.setsid()
 			signal.signal(signal.SIGINT, signal.SIG_DFL)
 			signal.signal(signal.SIGTERM, signal.SIG_DFL)
 			signal.signal(signal.SIGPIPE, signal.SIG_DFL)
