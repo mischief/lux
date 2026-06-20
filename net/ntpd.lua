@@ -9,7 +9,7 @@ local socket = require("posix.sys.socket")
 local poll = require("posix.poll")
 local time = require("posix.time")
 local imsg = require("imsg")
-local log = require("net.log")
+local log = require("lux.log")
 local rpc = require("net.rpc")
 
 local M = {}

@@ -12,7 +12,7 @@ shared_library('sys', net_sys_src,
   install_dir: lua_lib_dir / 'net',
 )
 
-install_data('log.lua', 'dhcp.lua', 'engine.lua', 'rpc.lua', 'ntpd.lua',
+install_data('dhcp.lua', 'engine.lua', 'rpc.lua', 'ntpd.lua',
   install_dir: lua_mod_dir / 'net',
 )
 

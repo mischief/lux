@@ -15,22 +15,28 @@ local dirent = require("posix.dirent")
 local imsg = require("imsg")
 local rpc = require("lux.rpc")
 local sys = require("lux.sys")
+local logger = require("lux.log")
 
 -- Defaults
 local sock_path = "/run/lux.sock"
 local svc_dir = "/etc/lux/services"
+local debug_mode = false
 
 -- Parse options
 local optind = 1
-for opt, optarg, oi in unistd.getopt(a, "s:d:h") do
+for opt, optarg, oi in unistd.getopt(a, "s:d:Dh") do
 	if opt == "s" then sock_path = optarg
 	elseif opt == "d" then svc_dir = optarg
+	elseif opt == "D" then debug_mode = true
 	elseif opt == "h" then
-		unistd.write(1, "usage: luxd [-s sock_path] [-d services_dir]\n")
+		unistd.write(1, "usage: luxd [-D] [-s sock_path] [-d services_dir]\n")
 		os.exit(0)
 	end
 	optind = oi
 end
+
+logger.procinit("luxd")
+logger.init(debug_mode, logger.LOG_DAEMON)
 
 -- State
 local services = {} -- name -> {def, pid, state}
@@ -39,7 +45,7 @@ local shutdown_requested = false
 
 -- Logging
 local function log(fmt, ...)
-	unistd.write(2, "luxd: " .. string.format(fmt, ...) .. "\n")
+	logger.info(string.format(fmt, ...))
 end
 
 -- Mount essential filesystems (only when -m, i.e. running as real init)

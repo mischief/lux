@@ -12,6 +12,6 @@ shared_library('sys', sys_src,
   install_dir: lua_lib_dir / 'lux',
 )
 
-install_data('rpc.lua',
+install_data('rpc.lua', 'log.lua',
   install_dir: lua_mod_dir / 'lux',
 )
