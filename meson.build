@@ -28,7 +28,8 @@ subdir('net')
 git = find_program('git', required: false)
 if git.found()
   version_str = run_command(git, 'describe', '--always', '--dirty', check: false).stdout().strip()
-else
+endif
+if not git.found() or version_str == ''
   version_str = meson.project_version()
 endif
 
