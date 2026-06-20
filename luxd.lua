@@ -425,6 +425,10 @@ socket.bind(srv_fd, { family = socket.AF_UNIX, path = sock_path })
 socket.listen(srv_fd, 5)
 log("listening on %s", sock_path)
 
+-- Restrict syscalls now that setup is complete
+-- On OpenBSD this calls pledge(2); on Linux it is a no-op stub
+sys.restrict()
+
 -- Main loop
 
 while running do

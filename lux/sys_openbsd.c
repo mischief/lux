@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/mount.h>
+#include <sys/pledge.h>
 #include <sys/reboot.h>
 #include <sys/resource.h>
 #include <sys/ioctl.h>
@@ -119,6 +120,17 @@ static int l_set_ctty(lua_State *L) {
 	return 1;
 }
 
+/* lux.sys.restrict() -> true or nil, errmsg */
+static int l_restrict(lua_State *L) {
+	if (pledge("stdio rpath proc exec unix", NULL) == -1) {
+		lua_pushnil(L);
+		lua_pushstring(L, strerror(errno));
+		return 2;
+	}
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
 static const luaL_Reg sys_funcs[] = {
 	{"setsid", l_setsid},
 	{"set_ctty", l_set_ctty},
@@ -128,6 +140,7 @@ static const luaL_Reg sys_funcs[] = {
 	{"sethostname", l_sethostname},
 	{"setrlimit", l_setrlimit},
 	{"getrlimit", l_getrlimit},
+	{"restrict", l_restrict},
 	{NULL, NULL}
 };
 

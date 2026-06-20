@@ -139,6 +139,13 @@ static int l_set_ctty(lua_State *L) {
 	return 1;
 }
 
+/* lux.sys.restrict(promises) -> true (stub on Linux) */
+static int l_restrict(lua_State *L) {
+	(void)L;
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
 static const luaL_Reg sys_funcs[] = {
 	{"setsid", l_setsid},
 	{"set_ctty", l_set_ctty},
@@ -149,6 +156,7 @@ static const luaL_Reg sys_funcs[] = {
 	{"setrlimit", l_setrlimit},
 	{"getrlimit", l_getrlimit},
 	{"prctl", l_prctl},
+	{"restrict", l_restrict},
 	{NULL, NULL}
 };
 
