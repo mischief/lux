@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: ISC
 
-shared_library('sys', 'sys.c',
+sys_src = {
+  'linux':   'sys_linux.c',
+  'openbsd': 'sys_openbsd.c',
+}.get(host_machine.system(), 'sys_linux.c')
+
+shared_library('sys', sys_src,
   dependencies: lua_dep,
   name_prefix: '',
   install: true,
