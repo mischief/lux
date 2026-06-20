@@ -146,7 +146,6 @@ int luaopen_lux_sys(lua_State *L) {
 	/* rlimit resources */
 	lua_pushinteger(L, RLIMIT_NOFILE); lua_setfield(L, -2, "RLIMIT_NOFILE");
 	lua_pushinteger(L, RLIMIT_NPROC); lua_setfield(L, -2, "RLIMIT_NPROC");
-	lua_pushinteger(L, RLIMIT_AS); lua_setfield(L, -2, "RLIMIT_AS");
 	lua_pushinteger(L, RLIMIT_CORE); lua_setfield(L, -2, "RLIMIT_CORE");
 	lua_pushinteger(L, RLIMIT_CPU); lua_setfield(L, -2, "RLIMIT_CPU");
 	return 1;
