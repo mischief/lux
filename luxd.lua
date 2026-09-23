@@ -20,16 +20,18 @@ local logger = require("lux.log")
 -- Defaults
 local sock_path = "/run/lux.sock"
 local svc_dir = "/etc/lux/services"
+local exit_prog = "/old/shutdown"
 local debug_mode = false
 
 -- Parse options
 local optind = 1
-for opt, optarg, oi in unistd.getopt(a, "s:d:Dh") do
+for opt, optarg, oi in unistd.getopt(a, "s:d:e:Dh") do
 	if opt == "s" then sock_path = optarg
 	elseif opt == "d" then svc_dir = optarg
+	elseif opt == "e" then exit_prog = optarg
 	elseif opt == "D" then debug_mode = true
 	elseif opt == "h" then
-		unistd.write(1, "usage: luxd [-D] [-s sock_path] [-d services_dir]\n")
+		unistd.write(1, "usage: luxd [-D] [-s sock_path] [-d services_dir] [-e exit_prog]\n")
 		os.exit(0)
 	end
 	optind = oi
@@ -48,9 +50,38 @@ local function log(fmt, ...)
 	logger.info(string.format(fmt, ...))
 end
 
+-- Read a whole file, or nil. /proc/self/mounts has no size to stat.
+local function slurp(path)
+	local fd = fcntl.open(path, fcntl.O_RDONLY)
+	if not fd then return nil end
+	local out = {}
+	while true do
+		local chunk = unistd.read(fd, 4096)
+		if not chunk or #chunk == 0 then break end
+		out[#out + 1] = chunk
+	end
+	unistd.close(fd)
+	return table.concat(out)
+end
+
+-- Before /proc is mounted there is nothing to consult, and the answer
+-- is that nothing is mounted.
+local function mounted(target)
+	local mounts = slurp("/proc/self/mounts")
+	if not mounts then return false end
+	for line in mounts:gmatch("[^\n]+") do
+		local point = line:match("^%S+ (%S+)")
+		if point == target then return true end
+	end
+	return false
+end
+
 -- Mount essential filesystems (only when -m, i.e. running as real init)
 local function mount_fs()
+	-- A mountpoint that already carries a mount is left alone: mounting
+	-- over it hides what the initramfs put there.
 	local function mnt(s, t, fs)
+		if mounted(t) then return end
 		pcall(stat.mkdir, t, tonumber("755", 8))
 		sys.mount(s, t, fs)
 	end
@@ -511,7 +542,13 @@ end
 
 os.remove(sock_path)
 
--- If we're PID 1, reboot/halt instead of exiting
+-- pid 1 has nowhere to exit to. An exit program, if there is one, owns
+-- the rest: it stops whatever serves the root and powers the machine
+-- off itself, so it is exec'd rather than called.
 if unistd.getpid() == 1 then
+	if unistd.access(exit_prog, "x") == 0 then
+		unistd.exec(exit_prog, {})
+		logger.error("exec " .. exit_prog .. " failed")
+	end
 	sys.reboot(sys.RB_POWER_OFF)
 end

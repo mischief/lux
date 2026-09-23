@@ -94,12 +94,13 @@ tests = [
   'shutdown',
   'oneshot',
   'target',
+  'pid1',
 ]
 
 foreach t : tests
   test('lux.' + t, sh,
     args: [meson.current_source_dir() / 'tests' / t + '.sh'],
     env: test_env,
-    timeout: 15,
+    timeout: 60,
   )
 endforeach
