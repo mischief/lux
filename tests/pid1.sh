@@ -16,7 +16,7 @@ mount -t tmpfs tmpfs /run || exit 77
 
 cat > /run/exit <<EOF
 #!/bin/sh
-: > /run/exited
+echo "\$1" > /run/exited
 EOF
 chmod +x /run/exit
 mkdir -p /run/services
@@ -41,6 +41,19 @@ luxd /run/exit || exit 1
 lua5.4 "$D/luxctl.lua" -s /run/lux.sock shutdown || exit 1
 wait $PID 2>/dev/null
 [ -e /run/exited ] || { echo "the exit program did not run"; exit 1; }
+
+# which signal arrived is what the exit program is told to do
+for pair in "USR2 poweroff" "USR1 halt" "TERM reboot"; do
+	sig=${pair% *}
+	want=${pair#* }
+	rm -f /run/exited /run/lux.sock
+	luxd /run/exit || exit 1
+	# $PID is unshare; luxd is its child and the one holding pid 1
+	kill -$sig "$(pgrep -P $PID -n)"
+	wait $PID 2>/dev/null
+	got=$(cat /run/exited 2>/dev/null)
+	[ "$got" = "$want" ] || { echo "$sig gave [$got]"; exit 1; }
+done
 
 # the control: a file that is not executable is not an exit program, so
 # nothing of it runs and luxd takes its own path instead

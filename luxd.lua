@@ -44,6 +44,9 @@ logger.init(debug_mode, logger.LOG_DAEMON)
 local services = {} -- name -> {def, pid, state}
 local running = true
 local shutdown_requested = false
+-- What the machine does after the services stop. A signal picks it,
+-- busybox style, and the exit program is told which one.
+local exit_action = "poweroff"
 
 -- Logging
 local function log(fmt, ...)
@@ -334,10 +337,16 @@ signal.signal(signal.SIGCHLD, function()
 	unistd.write(chld_w, "c")
 end)
 signal.signal(signal.SIGTERM, function()
-	unistd.write(term_w, "t")
+	unistd.write(term_w, "r")
 end)
 signal.signal(signal.SIGINT, function()
-	unistd.write(term_w, "t")
+	unistd.write(term_w, "r")
+end)
+signal.signal(signal.SIGUSR1, function()
+	unistd.write(term_w, "h")
+end)
+signal.signal(signal.SIGUSR2, function()
+	unistd.write(term_w, "p")
 end)
 
 -- Mount essential API filesystems when running as PID 1
@@ -527,7 +536,14 @@ while running do
 
 	-- Check for SIGTERM/SIGINT
 	if fds[term_r].revents and fds[term_r].revents.IN then
-		while unistd.read(term_r, 64) do end
+		local letter
+		while true do
+			local d = unistd.read(term_r, 64)
+			if not d or #d == 0 then break end
+			letter = d:sub(-1)
+		end
+		local action = { r = "reboot", h = "halt", p = "poweroff" }
+		exit_action = action[letter] or exit_action
 		shutdown_requested = true
 	end
 
@@ -547,8 +563,12 @@ os.remove(sock_path)
 -- off itself, so it is exec'd rather than called.
 if unistd.getpid() == 1 then
 	if unistd.access(exit_prog, "x") == 0 then
-		unistd.exec(exit_prog, {})
+		unistd.exec(exit_prog, { exit_action })
 		logger.error("exec " .. exit_prog .. " failed")
 	end
-	sys.reboot(sys.RB_POWER_OFF)
+	sys.reboot(({
+		reboot = sys.RB_AUTOBOOT,
+		halt = sys.RB_HALT_SYSTEM,
+		poweroff = sys.RB_POWER_OFF,
+	})[exit_action])
 end
